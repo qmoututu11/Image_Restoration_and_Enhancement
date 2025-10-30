@@ -1,0 +1,32 @@
+# Data and artifacts
+data/
+outputs/
+checkpoints/
+logs/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Hugging Face caches
+~/.cache/huggingface/
+hf_cache/
+
+

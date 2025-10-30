@@ -1,0 +1,11 @@
+numpy>=1.24
+opencv-python>=4.8
+tqdm>=4.66
+requests>=2.31
+Pillow>=10.0
+torch>=2.1
+diffusers>=0.30
+transformers>=4.44
+accelerate>=0.34
+safetensors>=0.4
+
