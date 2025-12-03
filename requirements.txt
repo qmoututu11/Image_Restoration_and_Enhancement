@@ -4,8 +4,19 @@ tqdm>=4.66
 requests>=2.31
 Pillow>=10.0
 torch>=2.1
+torchvision>=0.16
 diffusers>=0.30
 transformers>=4.44
 accelerate>=0.34
 safetensors>=0.4
+scikit-image>=0.21
+lpips>=0.1
+scipy>=1.10
+gradio>=4.0
+huggingface_hub>=0.20
+datasets>=2.14
+
+# Optional: For Real-ESRGAN super-resolution (install separately if needed)
+# realesrgan>=0.2.0
+# basicsr>=1.4.2
 

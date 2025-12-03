@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import random
 import shutil
 import sys
@@ -34,25 +33,13 @@ def download_file(url: str, dst: Path) -> None:
                     pbar.update(len(chunk))
 
 
-def extract_zip(zip_path: Path, out_dir: Path) -> Path:
+def extract_zip(zip_path: Path, out_dir: Path) -> None:
     with zipfile.ZipFile(zip_path, 'r') as zf:
         zf.extractall(out_dir)
-    # COCO zips contain a directory named the same as split
-    return out_dir
 
 
-def sample_and_copy(images_dir: Path, output_root: Path, num_images: int, seed: int = 42, split_name: str = "train", target_split: str = None) -> None:
-    """
-    Sample images and copy to output directory.
-    
-    Args:
-        images_dir: Source directory with images
-        output_root: Root output directory
-        num_images: Number of images to sample (0 = use all)
-        seed: Random seed
-        split_name: Name of source split (for logging)
-        target_split: Target split name (train/val/test). If None, uses split_name.
-    """
+def sample_and_copy(images_dir: Path, output_root: Path, num_images: int, seed: int = 42, target_split: str = None) -> None:
+    """Sample images and copy to output directory."""
     rng = random.Random(seed)
     all_images = [p for p in images_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}]
     if not all_images:
@@ -63,7 +50,6 @@ def sample_and_copy(images_dir: Path, output_root: Path, num_images: int, seed: 
     else:
         selected = all_images
 
-    # If target_split is specified, use it directly (for train2017 -> train, val2017 -> val)
     if target_split:
         out_dir = output_root / "clean" / target_split
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +58,6 @@ def sample_and_copy(images_dir: Path, output_root: Path, num_images: int, seed: 
             shutil.copy2(src, dst)
         print(f"Saved {len(selected)} images to {output_root/'clean'/target_split}")
     else:
-        # Otherwise, create train/val/test split from sampled set: 85/10/5
         rng.shuffle(selected)
         n = len(selected)
         n_train = int(0.85 * n)
@@ -115,7 +100,7 @@ def main():
         
         if not train_zip.exists():
             print(f"Downloading train2017 from {train_url} ...")
-            print(f"⚠️  Warning: This is ~19GB. Make sure you have enough disk space!")
+            print(f"Warning: This is ~19GB. Make sure you have enough disk space!")
             download_file(train_url, train_zip)
         else:
             print(f"Found existing archive: {train_zip}")
@@ -133,11 +118,7 @@ def main():
                 raise RuntimeError("Could not locate extracted train2017 images directory")
 
             print(f"Sampling {args.train_images} training images from train2017...")
-            sample_and_copy(images_dir, out_root, args.train_images, seed=args.seed, split_name="train2017", target_split="train")
-        
-        # Clean up zip to save space (optional - comment out if you want to keep it)
-        # train_zip.unlink()
-        # print("Cleaned up train2017.zip to save space")
+            sample_and_copy(images_dir, out_root, args.train_images, seed=args.seed, target_split="train")
 
     # Download val2017 for validation and test
     if not args.skip_val:
@@ -167,14 +148,12 @@ def main():
             rng = random.Random(args.seed)
             rng.shuffle(all_val_images)
             
-            # Split val2017 into train, val, and test
             total_needed = args.train_images + args.val_images + args.test_images
             if total_needed > len(all_val_images):
                 total_needed = len(all_val_images)
             
             selected = all_val_images[:total_needed]
             
-            # Split into train, val, test
             train_selected = selected[:args.train_images] if args.train_images > 0 else []
             val_start = args.train_images
             val_end = val_start + args.val_images if args.val_images > 0 else val_start
@@ -183,7 +162,6 @@ def main():
             test_end = test_start + args.test_images if args.test_images > 0 else test_start
             test_selected = selected[test_start:test_end] if args.test_images > 0 else []
             
-            # Copy training images (from val2017 for now)
             if train_selected:
                 train_dir = out_root / "clean" / "train"
                 train_dir.mkdir(parents=True, exist_ok=True)
@@ -191,7 +169,6 @@ def main():
                     shutil.copy2(src, train_dir / src.name)
                 print(f"Saved {len(train_selected)} training images to {train_dir}")
             
-            # Copy validation images
             if val_selected:
                 val_dir = out_root / "clean" / "val"
                 val_dir.mkdir(parents=True, exist_ok=True)
@@ -199,7 +176,6 @@ def main():
                     shutil.copy2(src, val_dir / src.name)
                 print(f"Saved {len(val_selected)} validation images to {val_dir}")
             
-            # Copy test images
             if test_selected:
                 test_dir = out_root / "clean" / "test"
                 test_dir.mkdir(parents=True, exist_ok=True)
@@ -207,7 +183,7 @@ def main():
                     shutil.copy2(src, test_dir / src.name)
                 print(f"Saved {len(test_selected)} test images to {test_dir}")
 
-    print("\n✅ Done!")
+    print("\nDone!")
     print(f"\nFinal dataset structure:")
     for split in ["train", "val", "test"]:
         split_dir = out_root / "clean" / split
