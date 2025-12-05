@@ -23,7 +23,6 @@ try:
     from diffusers import (
         StableDiffusionInpaintPipeline,
         StableDiffusionImg2ImgPipeline,
-        StableDiffusionUpscalePipeline
     )
 except ImportError:
     print("Missing dependencies. Install: pip install diffusers transformers huggingface_hub", file=sys.stderr)
@@ -52,8 +51,8 @@ class RestorationPipeline:
             },
             "sr": {
                 "fine_tuned_dir": "outputs/models/super_resolution/final",
-                "pretrained_id": "stabilityai/stable-diffusion-x4-upscaler",
-                "default_backend": "auto",  # "auto" | "sd_upscaler" | "realesrgan" | "lanczos"
+                "pretrained_id": "runwayml/stable-diffusion-v1-5",
+                "default_backend": "auto",  # "auto" | "sd_img2img" | "realesrgan" | "lanczos"
             },
             "colorize": {
                 "fine_tuned_dir": "outputs/models/colorization/final",
@@ -71,9 +70,55 @@ class RestorationPipeline:
         self.prompts = {
             "denoise": "clean high quality photo, no noise, sharp details",
             "sr": "high quality, detailed, sharp",
-            "colorize": "realistic natural colors, high quality photo, detailed",
+            "colorize": "vibrant realistic natural colors, colorful, high quality photo, detailed, full color, rich colors",
             "inpaint": "high quality detailed photo",
         }
+    
+    def _find_latest_checkpoint(self, output_dir: Path) -> Path | None:
+        """
+        Find the latest checkpoint directory that contains UNet weights.
+        
+        Args:
+            output_dir: Base output directory (e.g., outputs/models/denoising)
+        
+        Returns:
+            Path to latest checkpoint with UNet weights, or None if not found
+        """
+        if not output_dir.exists():
+            return None
+        
+        # Look for checkpoint directories (checkpoint-epoch-* or checkpoint-*)
+        checkpoints = []
+        for checkpoint_dir in output_dir.glob("checkpoint-*"):
+            unet_dir = checkpoint_dir / "unet"
+            if unet_dir.exists():
+                # Check if UNet weights exist
+                unet_weights = list(unet_dir.glob("*.safetensors")) + list(unet_dir.glob("*.bin"))
+                if unet_weights:
+                    checkpoints.append(checkpoint_dir)
+        
+        if not checkpoints:
+            return None
+        
+        # Sort by directory name (checkpoint-epoch-N or checkpoint-N)
+        # Extract number for sorting
+        def get_checkpoint_num(path: Path) -> int:
+            name = path.name
+            if "epoch" in name:
+                # checkpoint-epoch-N
+                try:
+                    return int(name.split("-")[-1])
+                except:
+                    return 0
+            else:
+                # checkpoint-N
+                try:
+                    return int(name.split("-")[-1])
+                except:
+                    return 0
+        
+        checkpoints.sort(key=get_checkpoint_num, reverse=True)
+        return checkpoints[0]
     
     def _load_sd_pipeline(
         self,
@@ -97,11 +142,74 @@ class RestorationPipeline:
         model_type = "fine-tuned" if fine_tuned_path and fine_tuned_path.exists() else "pre-trained"
         try:
             if self.device == "cuda":
-                pipe = pipe_class.from_pretrained(
-                    model_path,
-                    torch_dtype=self.dtype,
-                    use_safetensors=False,
-                )
+                # Try using dtype first (newer API), fall back to torch_dtype if needed
+                # use_safetensors=True to load .safetensors files (default format for saved models)
+                try:
+                    pipe = pipe_class.from_pretrained(
+                        model_path,
+                        dtype=self.dtype,
+                        use_safetensors=True,
+                    )
+                except (TypeError, OSError, EnvironmentError) as e:
+                    # If loading fine-tuned model fails (e.g., missing UNet weights),
+                    # try loading from base pretrained model and then load UNet separately if available
+                    if fine_tuned_path and fine_tuned_path.exists() and "pretrained_id" in str(type(self.config)):
+                        # This is handled in the calling function, so just re-raise for now
+                        raise
+                    # Fallback to torch_dtype if dtype not supported
+                    try:
+                        pipe = pipe_class.from_pretrained(
+                            model_path,
+                            torch_dtype=self.dtype,
+                            use_safetensors=True,
+                        )
+                    except TypeError:
+                        raise e
+                
+                # If fine-tuned model exists and UNet was saved separately, load it
+                # This handles cases where only UNet was fine-tuned and saved separately
+                if fine_tuned_path and fine_tuned_path.exists() and model_path == str(fine_tuned_path):
+                    unet_dir = fine_tuned_path / "unet"
+                    unet_loaded = False
+                    
+                    # First try to load from final/unet directory
+                    if unet_dir.exists():
+                        unet_weights = list(unet_dir.glob("*.safetensors")) + list(unet_dir.glob("*.bin"))
+                        if unet_weights:
+                            try:
+                                from diffusers import UNet2DConditionModel
+                                fine_tuned_unet = UNet2DConditionModel.from_pretrained(
+                                    str(unet_dir),
+                                    torch_dtype=self.dtype,
+                                    use_safetensors=True,
+                                )
+                                pipe.unet = fine_tuned_unet
+                                logger.info(f"  Loaded fine-tuned UNet from {unet_dir}")
+                                unet_loaded = True
+                            except Exception as e:
+                                logger.warning(f"  Could not load fine-tuned UNet from {unet_dir}: {e}")
+                    
+                    # If UNet not found in final directory, try to find latest checkpoint
+                    if not unet_loaded and fine_tuned_path.parent.exists():
+                        checkpoint_path = self._find_latest_checkpoint(fine_tuned_path.parent)
+                        if checkpoint_path:
+                            checkpoint_unet_dir = checkpoint_path / "unet"
+                            if checkpoint_unet_dir.exists():
+                                try:
+                                    from diffusers import UNet2DConditionModel
+                                    fine_tuned_unet = UNet2DConditionModel.from_pretrained(
+                                        str(checkpoint_unet_dir),
+                                        torch_dtype=self.dtype,
+                                        use_safetensors=True,
+                                    )
+                                    pipe.unet = fine_tuned_unet
+                                    logger.info(f"  Loaded fine-tuned UNet from checkpoint: {checkpoint_path}")
+                                    unet_loaded = True
+                                except Exception as e:
+                                    logger.warning(f"  Could not load UNet from checkpoint {checkpoint_path}: {e}")
+                    
+                    if not unet_loaded:
+                        logger.info("  Using UNet from pipeline (base model - fine-tuned UNet not found)")
                 # Explicitly move all components to GPU (no CPU offloading)
                 pipe = pipe.to("cuda")
                 pipe.unet = pipe.unet.to("cuda")
@@ -120,22 +228,36 @@ class RestorationPipeline:
                     if unet_device.type != "cuda" or vae_device.type != "cuda" or text_encoder_device.type != "cuda":
                         logger.warning(f"  WARNING: Some components are not on GPU! This may cause slow inference.")
             else:
-                pipe = pipe_class.from_pretrained(
-                    model_path,
-                    torch_dtype=torch.float32,
-                    use_safetensors=False,
-                )
+                try:
+                    pipe = pipe_class.from_pretrained(
+                        model_path,
+                        dtype=torch.float32,
+                        use_safetensors=True,
+                    )
+                except TypeError:
+                    pipe = pipe_class.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float32,
+                        use_safetensors=True,
+                    )
                 pipe = pipe.to("cpu")
                 logger.info(f"{task_name} model ready ({model_type}, CPU)")
             return pipe
         except RuntimeError as e:
             if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
                 logger.warning(f"GPU out of memory for {task_name}, retrying on CPU...")
-                pipe = pipe_class.from_pretrained(
-                    model_path,
-                    torch_dtype=torch.float32,
-                    use_safetensors=False,
-                )
+                try:
+                    pipe = pipe_class.from_pretrained(
+                        model_path,
+                        dtype=torch.float32,
+                        use_safetensors=True,
+                    )
+                except TypeError:
+                    pipe = pipe_class.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float32,
+                        use_safetensors=True,
+                    )
                 pipe = pipe.to("cpu")
                 logger.info(f"{task_name} model ready ({model_type}, using CPU)")
                 return pipe
@@ -158,18 +280,39 @@ class RestorationPipeline:
                 
                 if fine_tuned_path.exists():
                     logger.info("Found fine-tuned model, loading...")
+                    try:
+                        self.models["denoise"] = self._load_sd_pipeline(
+                            StableDiffusionImg2ImgPipeline,
+                            model_path,
+                            task_name="Denoising",
+                            fine_tuned_path=fine_tuned_path,
+                        )
+                        if backend == "diffusion":
+                            return
+                    except (OSError, EnvironmentError) as e:
+                        # Fine-tuned model directory exists but is incomplete (e.g., missing UNet weights)
+                        logger.warning(f"Fine-tuned model directory exists but is incomplete: {e}")
+                        logger.info(f"Falling back to pretrained model: {cfg['pretrained_id']}")
+                        model_path = cfg["pretrained_id"]
+                        self.models["denoise"] = self._load_sd_pipeline(
+                            StableDiffusionImg2ImgPipeline,
+                            model_path,
+                            task_name="Denoising",
+                            fine_tuned_path=None,  # Not fine-tuned, using base model
+                        )
+                        if backend == "diffusion":
+                            return
                 else:
                     logger.info("Using pre-trained model from Hugging Face (fine-tuned not found)")
                     logger.info("To use fine-tuned model, train with: python3 scripts/train_denoising.py")
-                
-                self.models["denoise"] = self._load_sd_pipeline(
-                    StableDiffusionImg2ImgPipeline,
-                    model_path,
-                    task_name="Denoising",
-                    fine_tuned_path=fine_tuned_path,
-                )
-                if backend == "diffusion":
-                    return
+                    self.models["denoise"] = self._load_sd_pipeline(
+                        StableDiffusionImg2ImgPipeline,
+                        model_path,
+                        task_name="Denoising",
+                        fine_tuned_path=None,
+                    )
+                    if backend == "diffusion":
+                        return
             except Exception as e:
                 if backend == "diffusion":
                     raise RuntimeError(f"Diffusion-based denoising failed: {e}")
@@ -192,8 +335,8 @@ class RestorationPipeline:
         backend = cfg.get("default_backend", "auto")
         fine_tuned_path = Path(cfg["fine_tuned_dir"])
         
-        # Try Stable Diffusion Upscaler
-        if backend in ("auto", "sd_upscaler"):
+        # Try Stable Diffusion Img2Img (aligned with training script)
+        if backend in ("auto", "sd_img2img"):
             try:
                 if fine_tuned_path.exists():
                     logger.info("Found fine-tuned model, loading...")
@@ -204,17 +347,17 @@ class RestorationPipeline:
                     model_path = cfg["pretrained_id"]
                 
                 self.models["sr"] = self._load_sd_pipeline(
-                    StableDiffusionUpscalePipeline,
+                    StableDiffusionImg2ImgPipeline,
                     model_path,
                     task_name="Super-resolution",
                     fine_tuned_path=fine_tuned_path,
                 )
-                if backend == "sd_upscaler":
+                if backend == "sd_img2img":
                     return
             except Exception as e:
-                if backend == "sd_upscaler":
-                    raise RuntimeError(f"Stable Diffusion Upscaler failed: {e}")
-                logger.warning(f"Stable Diffusion Upscaler failed: {e}")
+                if backend == "sd_img2img":
+                    raise RuntimeError(f"Stable Diffusion Img2Img failed: {e}")
+                logger.warning(f"Stable Diffusion Img2Img failed: {e}")
                 if backend == "auto":
                     logger.info("Trying Real-ESRGAN as fallback...")
             
@@ -317,6 +460,15 @@ class RestorationPipeline:
                 task_name="Inpainting",
                 fine_tuned_path=fine_tuned_path,
             )
+            
+            # Disable safety checker for inpainting (it blocks legitimate restoration images)
+            if hasattr(self.models["inpaint"], 'safety_checker'):
+                self.models["inpaint"].safety_checker = None
+            if hasattr(self.models["inpaint"], 'feature_extractor'):
+                self.models["inpaint"].feature_extractor = None
+            if hasattr(self.models["inpaint"], 'requires_safety_checker'):
+                self.models["inpaint"].requires_safety_checker = False
+            logger.info("Safety checker disabled for inpainting")
         except Exception as e:
             logger.error("Could not load inpainting model", exc_info=True)
             logger.warning("Inpainting will be disabled")
@@ -399,8 +551,8 @@ class RestorationPipeline:
         
         model = self.models["sr"]
         
-        # Use Stable Diffusion Upscaler if available
-        if isinstance(model, StableDiffusionUpscalePipeline):
+        # Use Stable Diffusion Img2Img if available (aligned with training)
+        if isinstance(model, StableDiffusionImg2ImgPipeline):
             return self._sr_sd(image, model, scale=scale, **kwargs)
         
         # Use Real-ESRGAN if available
@@ -411,7 +563,7 @@ class RestorationPipeline:
         return self._sr_lanczos(image, scale=scale)
     
     def _sr_sd(self, image: Image.Image, model, scale: int, **kwargs) -> Image.Image:
-        """Super-resolve using Stable Diffusion Upscaler."""
+        """Super-resolve using Stable Diffusion Img2Img (aligned with training)."""
         try:
             w, h = image.size
             if w * h > 1024 * 1024:
@@ -468,13 +620,26 @@ class RestorationPipeline:
         
         model = self.models["colorize"]
         
-        # Check if already color
+        # Check if already color - be more lenient for grayscale detection
         img_np = np.array(image)
+        
+        # Convert to grayscale for comparison
         if len(img_np.shape) == 3 and img_np.shape[2] == 3:
-            # Check if it's actually grayscale (all channels same)
-            if not (np.allclose(img_np[:,:,0], img_np[:,:,1]) and np.allclose(img_np[:,:,1], img_np[:,:,2])):
-                # Already has color
+            # Calculate per-pixel differences between channels
+            diff_rg = np.abs(img_np[:,:,0].astype(np.float32) - img_np[:,:,1].astype(np.float32))
+            diff_gb = np.abs(img_np[:,:,1].astype(np.float32) - img_np[:,:,2].astype(np.float32))
+            diff_rb = np.abs(img_np[:,:,0].astype(np.float32) - img_np[:,:,2].astype(np.float32))
+            
+            # Calculate mean difference across all pixels
+            mean_diff = (np.mean(diff_rg) + np.mean(diff_gb) + np.mean(diff_rb)) / 3.0
+            
+            # If mean difference is > 10, image likely has color
+            # (allowing for JPEG compression artifacts)
+            if mean_diff > 10.0:
+                logger.info(f"Image already has color (mean channel diff: {mean_diff:.2f}), skipping colorization")
                 return image
+            else:
+                logger.info(f"Detected grayscale image (mean channel diff: {mean_diff:.2f}), proceeding with colorization")
         
         # Convert to RGB if grayscale
         if len(img_np.shape) == 2:
@@ -485,24 +650,30 @@ class RestorationPipeline:
             img_rgb = cv2.cvtColor(img_np[:,:,0], cv2.COLOR_GRAY2RGB)
             image = Image.fromarray(img_rgb)
         
+        logger.info(f"Colorizing grayscale image, model type: {type(model)}")
+        
         # Use Stable Diffusion if available
         if isinstance(model, StableDiffusionImg2ImgPipeline):
-            return self._colorize_sd(image, model, **kwargs)
+            result = self._colorize_sd(image, model, **kwargs)
+            logger.info("Colorization completed using Stable Diffusion")
+            return result
         
         # Classical fallback
+        logger.info("Using LAB colorization fallback")
         return self._colorize_lab(image)
     
     def _colorize_sd(self, image: Image.Image, model, **kwargs) -> Image.Image:
         """Colorize using Stable Diffusion."""
         try:
             prompt = kwargs.get("prompt", self.prompts["colorize"])
+            logger.info(f"Colorizing with prompt: {prompt}, strength: 0.75")
             generator = torch.Generator(device=self.device).manual_seed(self.seed)
             result = model(
                 prompt=prompt,
                 image=image,
-                strength=0.4,  # Reduced from 0.7 to preserve structure better
-                num_inference_steps=20,
-                guidance_scale=5.0,  # Reduced from 7.5 to be less aggressive
+                strength=0.75,  # Higher strength for better colorization
+                num_inference_steps=30,  # More steps for better quality
+                guidance_scale=7.5,  # Higher guidance for better prompt following
                 generator=generator
             )
             return result.images[0]
@@ -573,6 +744,14 @@ class RestorationPipeline:
     def _inpaint_sd(self, image: Image.Image, model, mask: Image.Image, prompt: str) -> Image.Image:
         """Inpaint using Stable Diffusion."""
         try:
+            # Ensure safety checker is disabled before inference
+            if hasattr(model, 'safety_checker'):
+                model.safety_checker = None
+            if hasattr(model, 'feature_extractor'):
+                model.feature_extractor = None
+            if hasattr(model, 'requires_safety_checker'):
+                model.requires_safety_checker = False
+            
             generator = torch.Generator(device=self.device).manual_seed(self.seed)
             result = model(
                 prompt=prompt,

@@ -122,10 +122,17 @@ def train_colorization(
             handler.setLevel(logging.INFO)
     
     # Log start
+    training_start_time = datetime.now()
     logger.info("="*60)
     logger.info("Fine-tuning Stable Diffusion for Colorization")
     logger.info("="*60)
-    logger.info(f"Training started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Training started at: {training_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Log file: {log_file.absolute()}")
+    logger.info(f"Output directory: {output_dir.absolute()}")
+    logger.info(f"Base model: {base_model}")
+    logger.info(f"Image size: {image_size}")
+    logger.info(f"Max train samples: {max_train_samples if max_train_samples else 'all'}")
+    logger.info(f"Max val samples: {max_val_samples if max_val_samples else 'all'}")
     
     print("="*60)
     print("Fine-tuning Stable Diffusion for Colorization")
@@ -224,6 +231,11 @@ def train_colorization(
     train_dataset = ColorizationDataset(train_input_dir, train_gt_dir, image_size=image_size, max_samples=max_train_samples)
     val_dataset = ColorizationDataset(val_input_dir, val_gt_dir, image_size=image_size, max_samples=max_val_samples) if val_input_dir.exists() else None
     
+    logger.info(f"Training dataset size: {len(train_dataset)} samples")
+    logger.info(f"Validation dataset size: {len(val_dataset) if val_dataset else 0} samples")
+    print(f"Training dataset: {len(train_dataset)} samples")
+    print(f"Validation dataset: {len(val_dataset) if val_dataset else 0} samples")
+    
     train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
@@ -244,6 +256,13 @@ def train_colorization(
     unet, optimizer, train_loader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_loader, lr_scheduler
     )
+    
+    logger.info(f"DataLoader batches per epoch: {len(train_loader)}")
+    logger.info(f"UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,} trainable")
+    logger.info(f"UNet input channels: {unet.config.in_channels}")
+    logger.info(f"VAE scaling factor: {vae.config.scaling_factor}")
+    print(f"Batches per epoch: {len(train_loader)}")
+    print(f"Trainable UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,}")
     
     # Validation function
     def run_validation(epoch: int, val_dataset, pipeline, unet_model, output_dir: Path, num_samples: int = 4):
@@ -465,15 +484,20 @@ def train_colorization(
                     checkpoint_dir = output_dir / f"checkpoint-{global_step}"
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Save UNet
-                    unet_to_save = accelerator.unwrap_model(unet)
-                    unet_to_save.save_pretrained(checkpoint_dir / "unet")
-                    
-                    logger.info(f"Saved checkpoint at step {global_step}")
-                    for handler in logger.handlers:
-                        if isinstance(handler, logging.FileHandler):
-                            handler.flush()
-                    print(f"\nSaved checkpoint at step {global_step}")
+                # Save UNet
+                unet_to_save = accelerator.unwrap_model(unet)
+                unet_to_save.eval()
+                unet_to_save.save_pretrained(
+                    checkpoint_dir / "unet",
+                    safe_serialization=True,
+                    is_main_process=True
+                )
+
+                logger.info(f"Saved checkpoint at step {global_step}")
+                for handler in logger.handlers:
+                    if isinstance(handler, logging.FileHandler):
+                        handler.flush()
+                print(f"\nSaved checkpoint at step {global_step}")
         
         avg_loss = train_loss / len(train_loader)
         logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
@@ -481,6 +505,8 @@ def train_colorization(
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler):
                 handler.flush()
+        logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
+        logger.info(f"Epoch {epoch+1} processed {len(train_loader)} batches")
         print(f"\nEpoch {epoch+1} completed. Average loss: {avg_loss:.4f}")
         
         if save_steps == 0:
@@ -490,9 +516,15 @@ def train_colorization(
                 
                 # Save UNet
                 unet_to_save = accelerator.unwrap_model(unet)
-                unet_to_save.save_pretrained(checkpoint_dir / "unet")
+                unet_to_save.eval()
+                unet_to_save.save_pretrained(
+                    checkpoint_dir / "unet",
+                    safe_serialization=True,
+                    is_main_process=True
+                )
                 
-                logger.info(f"Saved checkpoint at end of epoch {epoch+1}")
+                logger.info(f"Saved checkpoint at end of epoch {epoch+1} to {checkpoint_dir}")
+                logger.info(f"Checkpoint contains: UNet weights and config")
                 for handler in logger.handlers:
                     if isinstance(handler, logging.FileHandler):
                         handler.flush()
@@ -510,17 +542,88 @@ def train_colorization(
     
     print("  Saving UNet...")
     unet_to_save = accelerator.unwrap_model(unet)
-    unet_to_save.save_pretrained(final_dir / "unet")
-    print("  UNet saved")
+    unet_to_save.eval()
     
-    # Save full pipeline
+    # Disable gradient checkpointing temporarily for saving (if enabled)
+    was_checkpointing = False
+    if hasattr(unet_to_save, "gradient_checkpointing") and unet_to_save.gradient_checkpointing:
+        was_checkpointing = True
+        unet_to_save.disable_gradient_checkpointing()
+    
+    unet_dir = final_dir / "unet"
+    unet_dir.mkdir(parents=True, exist_ok=True)
+    
+    # First, save config.json using save_pretrained (this always works)
+    try:
+        unet_to_save.save_pretrained(
+            str(unet_dir),
+            safe_serialization=True,
+            is_main_process=True
+        )
+        logger.info(f"UNet config saved to {unet_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to save UNet config via save_pretrained: {e}")
+    
+    # Always save weights directly using safetensors (more reliable)
+    print("  Saving UNet weights directly...")
+    try:
+        from safetensors.torch import save_file
+        import json
+        
+        # Get state dict
+        state_dict = unet_to_save.state_dict()
+        weight_path = unet_dir / "diffusion_pytorch_model.safetensors"
+        
+        # Save weights
+        save_file(state_dict, str(weight_path))
+        
+        # Verify file was created and has size > 0
+        if weight_path.exists() and weight_path.stat().st_size > 0:
+            file_size_mb = weight_path.stat().st_size / (1024 * 1024)
+            print(f"  UNet weights saved successfully: {weight_path.name} ({file_size_mb:.2f} MB)")
+            logger.info(f"UNet weights saved: {weight_path} ({file_size_mb:.2f} MB)")
+        else:
+            raise RuntimeError(f"Weight file {weight_path} was not created or is empty")
+        
+        # Ensure config.json exists
+        config_path = unet_dir / "config.json"
+        if not config_path.exists():
+            logger.warning("config.json missing, saving it now...")
+            config_dict = unet_to_save.config.to_dict()
+            with open(config_path, 'w') as f:
+                json.dump(config_dict, f, indent=2)
+            logger.info(f"UNet config.json saved to {config_path}")
+            
+    except ImportError:
+        logger.error("safetensors library not available - cannot save UNet weights")
+        raise RuntimeError("safetensors library is required to save UNet weights")
+    except Exception as e:
+        logger.error(f"Failed to save UNet weights: {e}", exc_info=True)
+        print(f"  ERROR: Failed to save UNet weights: {e}")
+        raise
+    finally:
+        if was_checkpointing and hasattr(unet_to_save, "enable_gradient_checkpointing"):
+            unet_to_save.enable_gradient_checkpointing()
+    
+    # Save full pipeline (all components: UNet, VAE, text_encoder, tokenizer, scheduler)
     print("  Saving full pipeline (this may take a few minutes)...")
     pipeline.unet = unet_to_save
-    pipeline.save_pretrained(final_dir)
-    print("  Pipeline saved")
+    pipeline.vae.eval()
+    pipeline.text_encoder.eval()
+    pipeline.save_pretrained(
+        final_dir,
+        safe_serialization=True,
+        is_main_process=True
+    )
+    print("  Pipeline saved (UNet, VAE, text_encoder, tokenizer, scheduler)")
     
+    training_end_time = datetime.now()
+    training_duration = training_end_time - training_start_time
     logger.info(f"Training complete! Model saved to: {final_dir}")
-    logger.info(f"Training completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Final model contains: UNet, VAE, text_encoder, tokenizer, scheduler")
+    logger.info(f"Training completed at: {training_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Total training duration: {training_duration}")
+    logger.info(f"Average time per epoch: {training_duration / num_epochs}")
     # Final flush
     for handler in logger.handlers:
         if isinstance(handler, logging.FileHandler):
@@ -564,7 +667,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_model", type=str, default="runwayml/stable-diffusion-v1-5",
                        help="Base model to fine-tune from. Options: "
                             "'runwayml/stable-diffusion-v1-5' (default, publicly accessible), "
-                            "'stabilityai/stable-diffusion-2-1' (better prompt following, may require HF token).")
+                            "'stabilityai/stable-diffusion-xl-base-1.0' (better quality, dual text encoders, publicly accessible).")
     args = parser.parse_args()
     
     train_colorization(
