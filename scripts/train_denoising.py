@@ -334,73 +334,38 @@ def train_denoising(
         if val_dataset is None or len(val_dataset) == 0:
             logger.warning("Validation dataset is None or empty, skipping validation")
             return None
-            
-            val_output_dir = output_dir / "val_samples"
-            val_output_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Sample a few validation images
-            num_samples = min(num_samples, len(val_dataset))
-            sample_indices = np.linspace(0, len(val_dataset) - 1, num_samples, dtype=int)
-            
-            psnr_values = []
-            ssim_values = []
-            lpips_values = []
-            
-            # Initialize metrics calculator (use GPU if available for LPIPS)
-            print("Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]")
-            sys.stdout.flush()
-            device_for_metrics = accelerator.device if torch.cuda.is_available() else "cpu"
-            metrics_calc = MetricsCalculator(use_lpips=True, use_fid=False, device=device_for_metrics)
-            
-            # Temporarily update pipeline with current UNet
-            pipeline.unet = accelerator.unwrap_model(unet_model)
-            
-            # All components are already on GPU (set at initialization)
-            # Just ensure pipeline is on the correct device
-            device = accelerator.device
-            
-            # Only move if not already on correct device (shouldn't happen, but safety check)
-            unet_device = next(pipeline.unet.parameters()).device
-            vae_device = next(pipeline.vae.parameters()).device
-            text_encoder_device = next(pipeline.text_encoder.parameters()).device
-            if unet_device != device:
-                pipeline.unet = pipeline.unet.to(device)
-            if vae_device != device:
-                pipeline.vae = pipeline.vae.to(device)
-            if text_encoder_device != device:
-                pipeline.text_encoder = pipeline.text_encoder.to(device)
-            # Handle SD-XL second text encoder
-            if is_sdxl_model and hasattr(pipeline, 'text_encoder_2'):
-                text_encoder_2_device = next(pipeline.text_encoder_2.parameters()).device
-                if text_encoder_2_device != device:
-                    pipeline.text_encoder_2 = pipeline.text_encoder_2.to(device)
-            
-            # CRITICAL: Set pipeline's internal device state
-            # This ensures pipeline.encode_prompt() and other internal methods use the correct device
-            pipeline = pipeline.to(device)
-            
-            # Disable safety checker for validation (it's blocking legitimate images)
-            # More aggressive disabling - set to None and also disable in config
-            if hasattr(pipeline, 'safety_checker'):
-                pipeline.safety_checker = None
-            if hasattr(pipeline, 'feature_extractor'):
-                pipeline.feature_extractor = None
-            # Also disable in pipeline config if it exists
-            if hasattr(pipeline, 'safety_checker') and hasattr(pipeline, '_safety_checker'):
-                pipeline._safety_checker = None
-            # Disable safety checker requirement
-            if hasattr(pipeline, 'requires_safety_checker'):
-                pipeline.requires_safety_checker = False
-            
-            # Set UNet to eval mode
-            pipeline.unet.eval()
-            pipeline.vae.eval()
-            pipeline.text_encoder.eval()
-            if is_sdxl_model and hasattr(pipeline, 'text_encoder_2'):
-                pipeline.text_encoder_2.eval()
-            
-            # Helper function to compute Y-channel metrics (YCbCr Y channel)
-            def compute_y_channel_metrics(result_np, gt_np):
+        
+        val_output_dir = output_dir / "val_samples"
+        val_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        num_samples = min(num_samples, len(val_dataset))
+        sample_indices = np.linspace(0, len(val_dataset) - 1, num_samples, dtype=int)
+        
+        psnr_values = []
+        ssim_values = []
+        lpips_values = []
+        
+        device_for_metrics = accelerator.device if torch.cuda.is_available() else "cpu"
+        metrics_calc = MetricsCalculator(use_lpips=True, use_fid=False, device=device_for_metrics)
+        
+        pipeline.unet = accelerator.unwrap_model(unet_model)
+        device = accelerator.device
+        pipeline = pipeline.to(device)
+        
+        if hasattr(pipeline, 'safety_checker'):
+            pipeline.safety_checker = None
+        if hasattr(pipeline, 'feature_extractor'):
+            pipeline.feature_extractor = None
+        if hasattr(pipeline, 'requires_safety_checker'):
+            pipeline.requires_safety_checker = False
+        
+        pipeline.unet.eval()
+        pipeline.vae.eval()
+        pipeline.text_encoder.eval()
+        if is_sdxl_model and hasattr(pipeline, 'text_encoder_2'):
+            pipeline.text_encoder_2.eval()
+        
+        def compute_y_channel_metrics(result_np, gt_np):
                 """Compute PSNR/SSIM on Y channel of YCbCr color space."""
                 # Convert to YCbCr
                 result_ycbcr = cv2.cvtColor(result_np, cv2.COLOR_RGB2YCrCb)
@@ -416,11 +381,10 @@ def train_denoising(
                 psnr_y = psnr(gt_y, result_y, data_range=255.0)
                 ssim_y = ssim(gt_y, result_y, data_range=255.0)
                 return psnr_y, ssim_y
-            
-            # Track metrics per sigma bucket
-            sigma_buckets = {}  # {sigma: {"psnr": [], "ssim": [], "psnr_y": [], "ssim_y": []}}
-            
-            try:
+        
+        sigma_buckets = {}
+        
+        try:
                 with torch.no_grad():
                     for i, idx in enumerate(sample_indices):
                         sample = val_dataset[idx]
@@ -436,16 +400,14 @@ def train_denoising(
                         result = pipeline(
                             prompt=prompt,
                             image=input_pil,
-                            strength=0.3,  # Lower strength for denoising (preserve more input)
-                            num_inference_steps=20,  # Fewer steps for faster validation
+                            strength=0.3,
+                            num_inference_steps=20,
                             guidance_scale=5.0
                         ).images[0]
                         
-                        result_np_check = np.array(result)
-                        if result_np_check.sum() < 1000:
-                            logger.warning(f"Sample {idx} produced dark output (sum={result_np_check.sum()}) - safety checker may still be active")
-                        
                         result_np = np.array(result)
+                        if result_np.sum() < 1000:
+                            logger.warning(f"Sample {idx} produced dark output (sum={result_np.sum()})")
                         gt_vis = (gt_img + 1.0) / 2.0
                         gt_vis = torch.clamp(gt_vis, 0, 1)
                         gt_np = (gt_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
@@ -461,7 +423,7 @@ def train_denoising(
                             ssim_values.append(ssim_rgb)
                             if metrics.get('lpips') is not None:
                                 lpips_values.append(metrics['lpips'])
-                        except Exception as e:
+                        except Exception:
                             try:
                                 from skimage.metrics import peak_signal_noise_ratio as psnr
                                 from skimage.metrics import structural_similarity as ssim
@@ -478,8 +440,8 @@ def train_denoising(
                         if psnr_rgb is not None:
                             try:
                                 psnr_y, ssim_y = compute_y_channel_metrics(result_np, gt_np)
-                            except Exception as e:
-                                logger.warning(f"Failed to compute Y-channel metrics for sample {idx}: {e}")
+                            except Exception:
+                                logger.warning(f"Failed to compute Y-channel metrics for sample {idx}")
                         
                         if sigma is not None:
                             sigma_bucket = int(round(sigma))
@@ -501,60 +463,59 @@ def train_denoising(
                         
                         save_path = val_output_dir / f"epoch_{epoch+1}_sample_{i+1}_idx{idx}.png"
                         comparison_pil.save(save_path)
-            finally:
-                pipeline.unet.train()
-                torch.cuda.empty_cache()
+        finally:
+            pipeline.unet.train()
+            torch.cuda.empty_cache()
+        
+        if psnr_values:
+            avg_psnr = np.mean(psnr_values)
+            avg_ssim = np.mean(ssim_values)
+            metric_str = f"Validation (epoch {epoch+1}): PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
             
-            # Log metrics and return
-            if psnr_values:
-                avg_psnr = np.mean(psnr_values)
-                avg_ssim = np.mean(ssim_values)
-                metric_str = f"Validation (epoch {epoch+1}): PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
-                
-                result = {"psnr": avg_psnr, "ssim": avg_ssim}
-                
-                if lpips_values:
-                    avg_lpips = np.mean(lpips_values)
-                    metric_str += f", LPIPS={avg_lpips:.4f}"
+            result = {"psnr": avg_psnr, "ssim": avg_ssim}
+            
+            if lpips_values:
+                avg_lpips = np.mean(lpips_values)
+                metric_str += f", LPIPS={avg_lpips:.4f}"
                 result["lpips"] = avg_lpips
-            
-            if sigma_buckets:
-                    metric_str += "\n  Per-sigma metrics:"
-                    for sigma_val in sorted(sigma_buckets.keys()):
-                        bucket = sigma_buckets[sigma_val]
-                        if bucket["psnr"]:
-                            avg_psnr_sigma = np.mean(bucket["psnr"])
-                            avg_ssim_sigma = np.mean(bucket["ssim"])
-                            metric_str += f"\n    σ={sigma_val}: PSNR={avg_psnr_sigma:.2f} dB, SSIM={avg_ssim_sigma:.4f}"
-                            if bucket["psnr_y"]:
-                                avg_psnr_y_sigma = np.mean(bucket["psnr_y"])
-                                avg_ssim_y_sigma = np.mean(bucket["ssim_y"])
-                                metric_str += f" | Y-channel: PSNR={avg_psnr_y_sigma:.2f} dB, SSIM={avg_ssim_y_sigma:.4f}"
-                            result[f"sigma_{sigma_val}"] = {
-                                "psnr": avg_psnr_sigma,
-                                "ssim": avg_ssim_sigma,
-                                "psnr_y": np.mean(bucket["psnr_y"]) if bucket["psnr_y"] else None,
-                                "ssim_y": np.mean(bucket["ssim_y"]) if bucket["ssim_y"] else None
-                            }
-            
-            y_psnr_values = []
-            y_ssim_values = []
-            for bucket in sigma_buckets.values():
-                if bucket["psnr_y"]:
-                    y_psnr_values.extend(bucket["psnr_y"])
-                    y_ssim_values.extend(bucket["ssim_y"])
-            
-            if y_psnr_values:
-                avg_psnr_y = np.mean(y_psnr_values)
-                avg_ssim_y = np.mean(y_ssim_values)
-                metric_str += f"\n  Y-channel (overall): PSNR={avg_psnr_y:.2f} dB, SSIM={avg_ssim_y:.4f}"
-                result["psnr_y"] = avg_psnr_y
-                result["ssim_y"] = avg_ssim_y
-            
-            logger.info(metric_str)
-            print(metric_str)
-            sys.stdout.flush()
-            return result
+        
+        if sigma_buckets:
+            metric_str += "\n  Per-sigma metrics:"
+            for sigma_val in sorted(sigma_buckets.keys()):
+                bucket = sigma_buckets[sigma_val]
+                if bucket["psnr"]:
+                    avg_psnr_sigma = np.mean(bucket["psnr"])
+                    avg_ssim_sigma = np.mean(bucket["ssim"])
+                    metric_str += f"\n    σ={sigma_val}: PSNR={avg_psnr_sigma:.2f} dB, SSIM={avg_ssim_sigma:.4f}"
+                    if bucket["psnr_y"]:
+                        avg_psnr_y_sigma = np.mean(bucket["psnr_y"])
+                        avg_ssim_y_sigma = np.mean(bucket["ssim_y"])
+                        metric_str += f" | Y-channel: PSNR={avg_psnr_y_sigma:.2f} dB, SSIM={avg_ssim_y_sigma:.4f}"
+                    result[f"sigma_{sigma_val}"] = {
+                        "psnr": avg_psnr_sigma,
+                        "ssim": avg_ssim_sigma,
+                        "psnr_y": np.mean(bucket["psnr_y"]) if bucket["psnr_y"] else None,
+                        "ssim_y": np.mean(bucket["ssim_y"]) if bucket["ssim_y"] else None
+                    }
+        
+        y_psnr_values = []
+        y_ssim_values = []
+        for bucket in sigma_buckets.values():
+            if bucket["psnr_y"]:
+                y_psnr_values.extend(bucket["psnr_y"])
+                y_ssim_values.extend(bucket["ssim_y"])
+        
+        if y_psnr_values:
+            avg_psnr_y = np.mean(y_psnr_values)
+            avg_ssim_y = np.mean(y_ssim_values)
+            metric_str += f"\n  Y-channel (overall): PSNR={avg_psnr_y:.2f} dB, SSIM={avg_ssim_y:.4f}"
+            result["psnr_y"] = avg_psnr_y
+            result["ssim_y"] = avg_ssim_y
+        
+        logger.info(metric_str)
+        print(metric_str)
+        sys.stdout.flush()
+        return result
         return None
     
     logger.info(f"\nStarting training for {num_epochs} epochs...")
@@ -562,9 +523,91 @@ def train_denoising(
     logger.info(f"Total steps: {num_train_steps}")
     logger.info(f"Learning rate: {learning_rate}")
     logger.info(f"Image size: {image_size}")
-    print(f"\nStarting training for {num_epochs} epochs...")
-    print(f"Batch size: {batch_size}, Gradient accumulation: {gradient_accumulation_steps}")
-    print(f"Total steps: {num_train_steps}")
+    
+    # Pre-compute text embeddings once (reused for all batches)
+    prompt = "clean high quality photo, no noise, sharp details"
+    logger.info("Pre-computing text embeddings...")
+    with torch.no_grad():
+        if is_sdxl and text_encoder_2 is not None:
+            text_inputs = tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt"
+            )
+            text_inputs_2 = tokenizer_2(
+                prompt,
+                padding="max_length",
+                max_length=tokenizer_2.model_max_length,
+                truncation=True,
+                return_tensors="pt"
+            )
+            encoder_output_1 = text_encoder(text_inputs.input_ids.to(accelerator.device))
+            encoder_output_2 = text_encoder_2(text_inputs_2.input_ids.to(accelerator.device))
+            
+            if hasattr(encoder_output_1, 'last_hidden_state'):
+                prompt_embeds = encoder_output_1.last_hidden_state
+            elif isinstance(encoder_output_1, tuple):
+                prompt_embeds = encoder_output_1[0]
+            else:
+                prompt_embeds = encoder_output_1
+            
+            if hasattr(encoder_output_2, 'last_hidden_state'):
+                prompt_embeds_2 = encoder_output_2.last_hidden_state
+                if hasattr(encoder_output_2, 'pooler_output') and encoder_output_2.pooler_output is not None:
+                    pooled_prompt_embeds = encoder_output_2.pooler_output
+                else:
+                    pooled_prompt_embeds = None
+            elif isinstance(encoder_output_2, tuple):
+                prompt_embeds_2 = encoder_output_2[0]
+                pooled_prompt_embeds = encoder_output_2[1] if len(encoder_output_2) > 1 else None
+            else:
+                prompt_embeds_2 = encoder_output_2
+                pooled_prompt_embeds = None
+            
+            seq_len_1 = prompt_embeds.shape[1]
+            seq_len_2 = prompt_embeds_2.shape[1]
+            if seq_len_1 != seq_len_2:
+                min_len = min(seq_len_1, seq_len_2)
+                if seq_len_1 > min_len:
+                    prompt_embeds = prompt_embeds[:, :min_len, :]
+                if seq_len_2 > min_len:
+                    prompt_embeds_2 = prompt_embeds_2[:, :min_len, :]
+            
+            cached_text_embeddings = torch.cat([prompt_embeds, prompt_embeds_2], dim=-1)
+            
+            if pooled_prompt_embeds is None:
+                pooled_prompt_embeds = prompt_embeds_2.mean(dim=1)
+            
+            if pooled_prompt_embeds is None or pooled_prompt_embeds.numel() == 0:
+                pooled_prompt_embeds = torch.zeros(1, 1280, dtype=cached_text_embeddings.dtype, device=cached_text_embeddings.device)
+            
+            cached_time_ids = torch.tensor(
+                [[image_size, image_size, 0, 0, image_size, image_size]],
+                dtype=cached_text_embeddings.dtype,
+                device=cached_text_embeddings.device
+            )
+            cached_added_cond_kwargs = {
+                "text_embeds": pooled_prompt_embeds.to(unet.dtype),
+                "time_ids": cached_time_ids.to(unet.dtype)
+            }
+        else:
+            text_inputs = tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt"
+            )
+            encoder_output = text_encoder(text_inputs.input_ids.to(accelerator.device))
+            if hasattr(encoder_output, 'last_hidden_state'):
+                cached_text_embeddings = encoder_output.last_hidden_state
+            elif isinstance(encoder_output, tuple):
+                cached_text_embeddings = encoder_output[0]
+            else:
+                cached_text_embeddings = encoder_output
+            cached_added_cond_kwargs = None
     
     global_step = 0
     
@@ -598,103 +641,22 @@ def train_denoising(
                 noisy_gt_latents = noise_scheduler.add_noise(gt_latents, noise, timesteps)
                 
                 # Uses "soft conditioning" via latent blending
-                # Inference parameters: strength=0.3, guidance_scale=5.0
                 alpha = timesteps.float() / noise_scheduler.config.num_train_timesteps
                 alpha = alpha.view(-1, 1, 1, 1)
                 model_input = (1 - alpha) * input_latents + alpha * noisy_gt_latents
                 
-                prompt = "clean high quality photo, no noise, sharp details"
-                added_cond_kwargs = None
-                with torch.no_grad():
-                    if is_sdxl and text_encoder_2 is not None:
-                        text_inputs = tokenizer(
-                            prompt,
-                            padding="max_length",
-                            max_length=tokenizer.model_max_length,
-                            truncation=True,
-                            return_tensors="pt"
-                        )
-                        text_inputs_2 = tokenizer_2(
-                            prompt,
-                            padding="max_length",
-                            max_length=tokenizer_2.model_max_length,
-                            truncation=True,
-                            return_tensors="pt"
-                        )
-                        encoder_output_1 = text_encoder(text_inputs.input_ids.to(accelerator.device))
-                        encoder_output_2 = text_encoder_2(text_inputs_2.input_ids.to(accelerator.device))
-                        
-                        if hasattr(encoder_output_1, 'last_hidden_state'):
-                            prompt_embeds = encoder_output_1.last_hidden_state
-                        elif isinstance(encoder_output_1, tuple):
-                            prompt_embeds = encoder_output_1[0]
-                        else:
-                            prompt_embeds = encoder_output_1
-                        
-                        if hasattr(encoder_output_2, 'last_hidden_state'):
-                            prompt_embeds_2 = encoder_output_2.last_hidden_state
-                            if hasattr(encoder_output_2, 'pooler_output') and encoder_output_2.pooler_output is not None:
-                                pooled_prompt_embeds = encoder_output_2.pooler_output
-                            else:
-                                pooled_prompt_embeds = None
-                        elif isinstance(encoder_output_2, tuple):
-                            prompt_embeds_2 = encoder_output_2[0]
-                            pooled_prompt_embeds = encoder_output_2[1] if len(encoder_output_2) > 1 else None
-                        else:
-                            prompt_embeds_2 = encoder_output_2
-                            pooled_prompt_embeds = None
-                        
-                        seq_len_1 = prompt_embeds.shape[1]
-                        seq_len_2 = prompt_embeds_2.shape[1]
-                        if seq_len_1 != seq_len_2:
-                            min_len = min(seq_len_1, seq_len_2)
-                            if seq_len_1 > min_len:
-                                prompt_embeds = prompt_embeds[:, :min_len, :]
-                            if seq_len_2 > min_len:
-                                prompt_embeds_2 = prompt_embeds_2[:, :min_len, :]
-                        
-                        text_embeddings = torch.cat([prompt_embeds, prompt_embeds_2], dim=-1)
-                        
-                        if pooled_prompt_embeds is None:
-                            pooled_prompt_embeds = prompt_embeds_2.mean(dim=1)
-                        
-                        if pooled_prompt_embeds is None or pooled_prompt_embeds.numel() == 0:
-                            batch_size = text_embeddings.shape[0]
-                            pooled_prompt_embeds = torch.zeros(batch_size, 1280, dtype=text_embeddings.dtype, device=text_embeddings.device)
-                        
-                        batch_size = text_embeddings.shape[0]
-                        time_ids = torch.tensor(
-                            [[image_size, image_size, 0, 0, image_size, image_size]],
-                            dtype=text_embeddings.dtype,
-                            device=text_embeddings.device
-                        ).repeat(batch_size, 1)
-                        
-                        if pooled_prompt_embeds.shape[0] == 1 and batch_size > 1:
-                            pooled_prompt_embeds = pooled_prompt_embeds.repeat(batch_size, 1)
-                        
-                        added_cond_kwargs = {
-                            "text_embeds": pooled_prompt_embeds.to(unet.dtype),
-                            "time_ids": time_ids.to(unet.dtype)
-                        }
-                    else:
-                        text_inputs = tokenizer(
-                            prompt,
-                            padding="max_length",
-                            max_length=tokenizer.model_max_length,
-                            truncation=True,
-                            return_tensors="pt"
-                        )
-                        encoder_output = text_encoder(text_inputs.input_ids.to(accelerator.device))
-                        if hasattr(encoder_output, 'last_hidden_state'):
-                            text_embeddings = encoder_output.last_hidden_state
-                        elif isinstance(encoder_output, tuple):
-                            text_embeddings = encoder_output[0]
-                        else:
-                            text_embeddings = encoder_output
-                
+                # Reuse pre-computed text embeddings (expand for batch size if needed)
                 batch_size = model_input.shape[0]
+                text_embeddings = cached_text_embeddings
                 if text_embeddings.shape[0] == 1 and batch_size > 1:
                     text_embeddings = text_embeddings.repeat(batch_size, 1, 1)
+                
+                added_cond_kwargs = cached_added_cond_kwargs
+                if added_cond_kwargs is not None and batch_size > 1:
+                    added_cond_kwargs = {
+                        "text_embeds": added_cond_kwargs["text_embeds"].repeat(batch_size, 1),
+                        "time_ids": added_cond_kwargs["time_ids"].repeat(batch_size, 1)
+                    }
                 
                 model_input = model_input.to(unet.dtype)
                 
@@ -802,44 +764,35 @@ def train_denoising(
                             handler.flush()
                     print(f"\nSaved checkpoint at step {global_step}")
         
-            avg_loss = train_loss / max(1, num_batches)
-            logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
-            # Force flush to ensure log is written immediately
-            for handler in logger.handlers:
-                if isinstance(handler, logging.FileHandler):
-                    handler.flush()
-            logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
-            logger.info(f"Epoch {epoch+1} processed {len(train_loader)} batches")
-            print(f"\nEpoch {epoch+1} completed. Average loss: {avg_loss:.4f}")
-            sys.stdout.flush()
-            
-            # Run validation every epoch for consistent monitoring across all tasks
-            if val_dataset is not None and accelerator.is_main_process:
-                val_stats = run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2, is_sdxl_model=is_sdxl)
-                if val_stats is not None:
-                    psnr = val_stats["psnr"]
-                    # Check if this is the best model so far
-                    if psnr > best_val_metric:
-                        best_val_metric = psnr
-                        accelerator.wait_for_everyone()
-                        if accelerator.is_main_process:
-                            unet_to_save = accelerator.unwrap_model(unet)
-                            pipeline.unet = unet_to_save
-                            save_dir = best_checkpoint_dir
-                            pipeline.save_pretrained(save_dir)
-                            logger.info(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
-                            print(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
-                            sys.stdout.flush()
+        avg_loss = train_loss / max(1, num_batches)
+        logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}, Processed {len(train_loader)} batches")
+        for handler in logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                handler.flush()
+        
+        # Run validation every epoch for consistent monitoring across all tasks
+        if val_dataset is not None and accelerator.is_main_process:
+            val_stats = run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2, is_sdxl_model=is_sdxl)
+            if val_stats is not None:
+                psnr = val_stats["psnr"]
+                if psnr > best_val_metric:
+                    best_val_metric = psnr
+                    accelerator.wait_for_everyone()
+                    if accelerator.is_main_process:
+                        unet_to_save = accelerator.unwrap_model(unet)
+                        pipeline.unet = unet_to_save
+                        save_dir = best_checkpoint_dir
+                        pipeline.save_pretrained(save_dir)
+                        logger.info(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
                 
-                    # Log metrics to CSV
-                    with open(metrics_file, "a") as f:
-                        lpips_val = val_stats.get('lpips', float('nan'))
-                        psnr_y_val = val_stats.get('psnr_y', float('nan'))
-                        ssim_y_val = val_stats.get('ssim_y', float('nan'))
-                        f.write(f"{epoch+1},{val_stats['psnr']:.4f},{val_stats['ssim']:.4f},"
-                                f"{lpips_val:.4f},{psnr_y_val:.4f},{ssim_y_val:.4f},{avg_loss:.6f}\n")
-            
-            if save_steps == 0:
+                with open(metrics_file, "a") as f:
+                    lpips_val = val_stats.get('lpips', float('nan'))
+                    psnr_y_val = val_stats.get('psnr_y', float('nan'))
+                    ssim_y_val = val_stats.get('ssim_y', float('nan'))
+                    f.write(f"{epoch+1},{val_stats['psnr']:.4f},{val_stats['ssim']:.4f},"
+                            f"{lpips_val:.4f},{psnr_y_val:.4f},{ssim_y_val:.4f},{avg_loss:.6f}\n")
+        
+        if save_steps == 0:
                 if accelerator.is_main_process:
                     checkpoint_dir = output_dir / f"checkpoint-epoch-{epoch+1}"
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)

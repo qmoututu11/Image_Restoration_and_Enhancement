@@ -416,9 +416,25 @@ def train_inpainting(
     logger.info(f"Total steps: {num_train_steps}")
     logger.info(f"Learning rate: {learning_rate}")
     logger.info(f"Image size: {image_size}")
-    print(f"\nStarting training for {num_epochs} epochs...")
-    print(f"Batch size: {batch_size}, Gradient accumulation: {gradient_accumulation_steps}")
-    print(f"Total steps: {num_train_steps}")
+    
+    # Pre-compute text embeddings once (reused for all batches)
+    prompt = "high quality detailed photo, realistic"
+    logger.info("Pre-computing text embeddings...")
+    with torch.no_grad():
+        text_inputs = tokenizer(
+            prompt,
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt"
+        )
+        encoder_output = text_encoder(text_inputs.input_ids.to(accelerator.device))
+        if hasattr(encoder_output, 'last_hidden_state'):
+            cached_text_embeddings = encoder_output.last_hidden_state
+        elif isinstance(encoder_output, tuple):
+            cached_text_embeddings = encoder_output[0]
+        else:
+            cached_text_embeddings = encoder_output
     
     global_step = 0
     
@@ -479,18 +495,9 @@ def train_inpainting(
                 alpha = alpha.view(-1, 1, 1, 1)
                 model_input_latents = (1 - alpha) * input_latents + alpha * noisy_gt_latents
                 
-                # Prepare text embeddings
-                prompt = "high quality detailed photo, realistic"
-                text_inputs = tokenizer(
-                    prompt,
-                    padding="max_length",
-                    max_length=tokenizer.model_max_length,
-                    truncation=True,
-                    return_tensors="pt"
-                )
-                with torch.no_grad():
-                    text_embeddings = text_encoder(text_inputs.input_ids.to(accelerator.device))[0]
-                batch_size = gt_latents.shape[0]
+                # Reuse pre-computed text embeddings (expand for batch size if needed)
+                batch_size = model_input_latents.shape[0]
+                text_embeddings = cached_text_embeddings
                 if text_embeddings.shape[0] == 1 and batch_size > 1:
                     text_embeddings = text_embeddings.repeat(batch_size, 1, 1)
                 
@@ -551,13 +558,10 @@ def train_inpainting(
                     print(f"\nSaved checkpoint at step {global_step}")
         
         avg_loss = train_loss / max(1, num_batches)
-        logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
+        logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}, Processed {len(train_loader)} batches")
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler):
                 handler.flush()
-        logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
-        logger.info(f"Epoch {epoch+1} processed {len(train_loader)} batches")
-        print(f"\nEpoch {epoch+1} completed. Average loss: {avg_loss:.4f}")
         
         if save_steps == 0:
             if accelerator.is_main_process:
