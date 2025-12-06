@@ -15,7 +15,7 @@ from tqdm import tqdm
 def generate_predictions(test_root: Path, output_root: Path, split: str = "test"):
     """Generate predictions for all tasks on test set."""
     
-    pipeline = RestorationPipeline()
+    pipeline = RestorationPipeline(backend="fine_tuned")
     
     # Task configuration
     tasks = {

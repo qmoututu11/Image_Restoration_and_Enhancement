@@ -19,6 +19,22 @@ logger = logging.getLogger(__name__)
 # Type aliases for better type hints
 Task = Literal["denoise", "sr", "super_resolution", "colorize", "inpaint"]
 
+# Standardized model directory mapping for fine-tuned models
+# All training scripts save the best model (based on validation PSNR) to:
+#   outputs/models/{task}/best/
+# This directory contains the full pipeline saved via pipeline.save_pretrained():
+#   - unet/ (fine-tuned UNet weights)
+#   - vae/ (VAE weights)
+#   - text_encoder/ (text encoder weights)
+#   - tokenizer/ (tokenizer config)
+#   - scheduler/ (scheduler config)
+TASK_MODEL_DIRS = {
+    "denoise": "outputs/models/denoising/best",
+    "sr": "outputs/models/super_resolution/best",
+    "colorize": "outputs/models/colorization/best",
+    "inpaint": "outputs/models/inpainting/best",
+}
+
 try:
     from diffusers import (
         StableDiffusionInpaintPipeline,
@@ -45,22 +61,22 @@ class RestorationPipeline:
         
         default_config = {
             "denoise": {
-                "fine_tuned_dir": "outputs/models/denoising/final",
-                "pretrained_id": "runwayml/stable-diffusion-v1-5",
+                "fine_tuned_dir": TASK_MODEL_DIRS["denoise"],
+                "pretrained_id": "sd-legacy/stable-diffusion-v1-5",
                 "default_backend": "auto",  # "auto" | "diffusion" | "opencv"
             },
             "sr": {
-                "fine_tuned_dir": "outputs/models/super_resolution/final",
-                "pretrained_id": "runwayml/stable-diffusion-v1-5",
+                "fine_tuned_dir": TASK_MODEL_DIRS["sr"],
+                "pretrained_id": "sd-legacy/stable-diffusion-v1-5",
                 "default_backend": "auto",  # "auto" | "sd_img2img" | "realesrgan" | "lanczos"
             },
             "colorize": {
-                "fine_tuned_dir": "outputs/models/colorization/final",
-                "pretrained_id": "runwayml/stable-diffusion-v1-5",
+                "fine_tuned_dir": TASK_MODEL_DIRS["colorize"],
+                "pretrained_id": "sd-legacy/stable-diffusion-v1-5",
             },
             "inpaint": {
-                "fine_tuned_dir": "outputs/models/inpainting/final",
-                "pretrained_id": "runwayml/stable-diffusion-inpainting",
+                "fine_tuned_dir": TASK_MODEL_DIRS["inpaint"],
+                "pretrained_id": "runwayml/stable-diffusion-inpainting",  # Note: Still using runwayml for inpainting (no direct stabilityai replacement)
             },
         }
         

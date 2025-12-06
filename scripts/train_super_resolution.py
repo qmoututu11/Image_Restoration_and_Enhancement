@@ -32,34 +32,29 @@ class SuperResolutionDataset(Dataset):
         self.gt_dir = Path(gt_dir)
         self.image_size = image_size
         
-        # Get all image files
         input_files = sorted(list(self.input_dir.glob("*.jpg")) + list(self.input_dir.glob("*.png")))
         self.files = []
         for f in input_files:
-            # Try to find matching GT file (could be .jpg or .png)
             gt_path_jpg = self.gt_dir / f"{f.stem}.jpg"
             gt_path_png = self.gt_dir / f"{f.stem}.png"
             if gt_path_jpg.exists() or gt_path_png.exists():
                 self.files.append(f)
         
-        # Limit samples for quick testing
         if max_samples is not None and max_samples > 0:
             self.files = self.files[:max_samples]
         
         print(f"Found {len(self.files)} super-resolution pairs" + (f" (limited to {max_samples} for quick test)" if max_samples else ""))
         
-        # Transform for input (low-res): resize to smaller size, convert to tensor, normalize to [-1, 1]
-        # Transform for GT (high-res): resize to image_size, convert to tensor, normalize to [-1, 1]
         self.input_transform = transforms.Compose([
-            transforms.Resize((image_size // 4, image_size // 4), Image.LANCZOS),  # Low-res input
+            transforms.Resize((image_size // 4, image_size // 4), Image.LANCZOS),
             transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])  # Normalize RGB to [-1, 1]
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
         
         self.gt_transform = transforms.Compose([
-            transforms.Resize((image_size, image_size), Image.LANCZOS),  # High-res GT
+            transforms.Resize((image_size, image_size), Image.LANCZOS),
             transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])  # Normalize RGB to [-1, 1]
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
     
     def __len__(self):
@@ -67,16 +62,13 @@ class SuperResolutionDataset(Dataset):
     
     def __getitem__(self, idx):
         input_path = self.files[idx]
-        # GT file might be .jpg or .png (match by stem)
         gt_path_jpg = self.gt_dir / f"{input_path.stem}.jpg"
         gt_path_png = self.gt_dir / f"{input_path.stem}.png"
         gt_path = gt_path_jpg if gt_path_jpg.exists() else gt_path_png
         
-        # Load images
         input_img = Image.open(input_path).convert("RGB")
         gt_img = Image.open(gt_path).convert("RGB")
         
-        # Apply transforms
         input_tensor = self.input_transform(input_img)
         gt_tensor = self.gt_transform(gt_img)
         
@@ -101,7 +93,8 @@ def train_super_resolution(
     image_size: int = 256,  # Reduced from 512 to save memory
     max_train_samples: int = None,  # Limit training samples for quick test
     max_val_samples: int = None,  # Limit validation samples for quick test
-    base_model: str = "runwayml/stable-diffusion-v1-5"  # Base model to fine-tune from
+    base_model: str = "sd-legacy/stable-diffusion-v1-5",  # Base model to fine-tune from
+    lambda_img: float = 0.05  # Weight for image-space L1 loss (0.0 to disable)
 ):
     """Fine-tune Stable Diffusion for super-resolution."""
     
@@ -116,16 +109,14 @@ def train_super_resolution(
         handlers=[
             logging.FileHandler(log_file, mode='a')  # Append mode
         ],
-        force=True  # Override any existing configuration
+        force=True
     )
     logger = logging.getLogger(__name__)
     
-    # Ensure file handler flushes immediately
     for handler in logger.handlers:
         if isinstance(handler, logging.FileHandler):
             handler.setLevel(logging.INFO)
     
-    # Log start
     training_start_time = datetime.now()
     logger.info("="*60)
     logger.info("Fine-tuning Stable Diffusion for Super-Resolution")
@@ -254,13 +245,23 @@ def train_super_resolution(
         len(train_dataset_temp) * num_epochs // (batch_size * gradient_accumulation_steps)
     )
     lr_scheduler = get_scheduler(
-        "constant",
+        "cosine",
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=int(num_train_steps * 0.05),  # 5% warmup
         num_training_steps=num_train_steps
     )
     
-    # Setup datasets
+    # Track best model
+    best_val_metric = -float("inf")  # PSNR (higher is better)
+    best_checkpoint_dir = output_dir / "best"
+    best_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Setup metrics CSV file
+    metrics_file = output_dir / "metrics.csv"
+    if accelerator.is_main_process and not metrics_file.exists():
+        with open(metrics_file, "w") as f:
+            f.write("epoch,psnr,ssim,lpips,psnr_y,ssim_y,train_loss\n")
+    
     train_dataset = SuperResolutionDataset(train_input_dir, train_gt_dir, image_size=image_size, max_samples=max_train_samples)
     val_dataset = SuperResolutionDataset(val_input_dir, val_gt_dir, image_size=image_size, max_samples=max_val_samples) if val_input_dir.exists() else None
     
@@ -277,7 +278,6 @@ def train_super_resolution(
             pin_memory=True if torch.cuda.is_available() else False
         )
     
-    # Setup noise scheduler
     noise_scheduler = DDPMScheduler.from_config(pipeline.scheduler.config)
     
     vae = vae.to(accelerator.device)
@@ -285,7 +285,6 @@ def train_super_resolution(
     vae.eval()
     text_encoder.eval()
     
-    # Prepare with accelerator
     unet, optimizer, train_loader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_loader, lr_scheduler
     )
@@ -297,11 +296,20 @@ def train_super_resolution(
     print(f"Batches per epoch: {len(train_loader)}")
     print(f"Trainable UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,}")
     
-    # Validation function
-    def run_validation(epoch: int, val_dataset, pipeline, unet_model, output_dir: Path, num_samples: int = 4):
-        """Run validation: sample images, compute metrics, save comparisons."""
+    def run_validation(epoch: int, val_dataset, pipeline, unet_model, output_dir: Path, num_samples: int = 4, image_size: int = None):
+        """Run validation: sample images, compute metrics, save comparisons.
+        
+        Args:
+            image_size: Target image size for upscaling (defaults to dataset's image_size)
+        
+        Returns:
+            dict with keys 'psnr', 'ssim', 'lpips', 'psnr_y', 'ssim_y' (if available), or None if validation skipped
+        """
         if val_dataset is None or len(val_dataset) == 0:
-            return
+            return None
+        
+        if image_size is None:
+            image_size = val_dataset.image_size if hasattr(val_dataset, 'image_size') else 256
         
         val_output_dir = output_dir / "val_samples"
         val_output_dir.mkdir(parents=True, exist_ok=True)
@@ -313,6 +321,8 @@ def train_super_resolution(
         psnr_values = []
         ssim_values = []
         lpips_values = []
+        psnr_y_values = []  # Y-channel PSNR
+        ssim_y_values = []  # Y-channel SSIM
         
         # Initialize metrics calculator (use GPU if available for LPIPS)
         device_for_metrics = accelerator.device if torch.cuda.is_available() else "cpu"
@@ -337,83 +347,129 @@ def train_super_resolution(
         pipeline.vae.eval()
         pipeline.text_encoder.eval()
         
+        # Helper function to compute Y-channel metrics (YCbCr Y channel)
+        def compute_y_channel_metrics(result_np, gt_np):
+            """Compute PSNR/SSIM on Y channel of YCbCr color space."""
+            # Convert to YCbCr
+            result_ycbcr = cv2.cvtColor(result_np, cv2.COLOR_RGB2YCrCb)
+            gt_ycbcr = cv2.cvtColor(gt_np, cv2.COLOR_RGB2YCrCb)
+            
+            # Extract Y channel (luminance)
+            result_y = result_ycbcr[:, :, 0]
+            gt_y = gt_ycbcr[:, :, 0]
+            
+            # Compute metrics on Y channel
+            from skimage.metrics import peak_signal_noise_ratio as psnr
+            from skimage.metrics import structural_similarity as ssim
+            psnr_y = psnr(gt_y, result_y, data_range=255.0)
+            ssim_y = ssim(gt_y, result_y, data_range=255.0)
+            return psnr_y, ssim_y
+        
         try:
             with torch.no_grad():
                 for i, idx in enumerate(sample_indices):
                     sample = val_dataset[idx]
-                    input_img = sample["input"]
-                    gt_img = sample["gt"]
+                    input_img = sample["input"]  # Low-res: (H/4, W/4) after transform
+                    gt_img = sample["gt"]  # High-res: (H, W) after transform
                     
                     # Denormalize input for visualization
                     input_vis = (input_img + 1.0) / 2.0
                     input_vis = torch.clamp(input_vis, 0, 1)
                     input_pil = transforms.ToPILImage()(input_vis)
                     
-                    # Run inference
+                    # Ensure scale alignment: Low-res is (H/4, W/4), upscale to (H, W) before pipeline
+                    # The input_pil is already at (H/4, W/4) from the dataset transform
+                    # Pipeline expects input at target resolution, so we upscale with bicubic
+                    lr_h, lr_w = input_pil.size
+                    target_h, target_w = image_size, image_size
+                    # Upscale low-res input to target resolution using bicubic interpolation
+                    input_pil_upscaled = input_pil.resize((target_w, target_h), Image.BICUBIC)
+                    
+                    # Run inference with lower guidance for SR (reduces hallucination)
                     prompt = "high quality, detailed, sharp"
                     result = pipeline(
                         prompt=prompt,
-                        image=input_pil,
-                        num_inference_steps=20,
-                        guidance_scale=7.0
+                        image=input_pil_upscaled,
+                        num_inference_steps=25,  # More steps for better detail
+                        guidance_scale=3.5  # Lower guidance to reduce hallucinated textures
                     ).images[0]
                     
                     # Convert to numpy for metrics
+                    # Pipeline output and GT should both be at (H, W) resolution
                     result_np = np.array(result)
                     gt_vis = (gt_img + 1.0) / 2.0
                     gt_vis = torch.clamp(gt_vis, 0, 1)
                     gt_np = (gt_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
                     
-                    # Resize result to match GT if needed
+                    # Ensure result matches GT resolution (should already match, but double-check)
                     if result_np.shape[:2] != gt_np.shape[:2]:
-                        result_np = cv2.resize(result_np, (gt_np.shape[1], gt_np.shape[0]))
+                        result_np = cv2.resize(result_np, (gt_np.shape[1], gt_np.shape[0]), interpolation=cv2.INTER_CUBIC)
                     
-                    # Compute metrics using MetricsCalculator (includes PSNR, SSIM, LPIPS)
+                    # Compute RGB metrics using MetricsCalculator (includes PSNR, SSIM, LPIPS)
                     try:
                         metrics = metrics_calc.calculate_all(result_np, gt_np)
-                        psnr_values.append(metrics['psnr'])
-                        ssim_values.append(metrics['ssim'])
+                        psnr_rgb = metrics['psnr']
+                        ssim_rgb = metrics['ssim']
+                        psnr_values.append(psnr_rgb)
+                        ssim_values.append(ssim_rgb)
                         if metrics.get('lpips') is not None:
                             lpips_values.append(metrics['lpips'])
                     except Exception as e:
-                        # Fallback to basic metrics if LPIPS fails
                         try:
                             from skimage.metrics import peak_signal_noise_ratio as psnr
                             from skimage.metrics import structural_similarity as ssim
-                            psnr_val = psnr(gt_np, result_np, data_range=255.0)
-                            ssim_val = ssim(gt_np, result_np, data_range=255.0, channel_axis=2)
-                            psnr_values.append(psnr_val)
-                            ssim_values.append(ssim_val)
+                            psnr_rgb = psnr(gt_np, result_np, data_range=255.0)
+                            ssim_rgb = ssim(gt_np, result_np, data_range=255.0, channel_axis=2)
+                            psnr_values.append(psnr_rgb)
+                            ssim_values.append(ssim_rgb)
                         except ImportError:
-                            pass
+                            psnr_rgb = None
+                            ssim_rgb = None
                     
-                    # Create side-by-side comparison
+                    if psnr_rgb is not None:
+                        try:
+                            psnr_y, ssim_y = compute_y_channel_metrics(result_np, gt_np)
+                            psnr_y_values.append(psnr_y)
+                            ssim_y_values.append(ssim_y)
+                        except Exception as e:
+                            logger.warning(f"Failed to compute Y-channel metrics for sample {idx}: {e}")
+                    
                     input_np = (input_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-                    # Resize input to match if needed
                     if input_np.shape[:2] != gt_np.shape[:2]:
                         input_np = cv2.resize(input_np, (gt_np.shape[1], gt_np.shape[0]))
                     comparison = np.hstack([input_np, result_np, gt_np])
                     comparison_pil = Image.fromarray(comparison)
                     
-                    # Save comparison (overwrite if exists)
                     save_path = val_output_dir / f"epoch_{epoch+1}_sample_{i+1}_idx{idx}.png"
                     comparison_pil.save(save_path)
         finally:
             pipeline.unet.train()
             torch.cuda.empty_cache()
         
-            # Log metrics
-            if psnr_values:
-                avg_psnr = np.mean(psnr_values)
-                avg_ssim = np.mean(ssim_values)
-                metric_str = f"Validation (epoch {epoch+1}): PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
-                
-                if lpips_values:
-                    avg_lpips = np.mean(lpips_values)
-                    metric_str += f", LPIPS={avg_lpips:.4f}"
-                
-                logger.info(metric_str)
-                print(metric_str)
+        # Log metrics and return
+        if psnr_values:
+            avg_psnr = np.mean(psnr_values)
+            avg_ssim = np.mean(ssim_values)
+            metric_str = f"Validation (epoch {epoch+1}): PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
+            
+            result = {"psnr": avg_psnr, "ssim": avg_ssim}
+            
+            if lpips_values:
+                avg_lpips = np.mean(lpips_values)
+                metric_str += f", LPIPS={avg_lpips:.4f}"
+                result["lpips"] = avg_lpips
+            
+            if psnr_y_values:
+                avg_psnr_y = np.mean(psnr_y_values)
+                avg_ssim_y = np.mean(ssim_y_values)
+                metric_str += f"\n  Y-channel: PSNR={avg_psnr_y:.2f} dB, SSIM={avg_ssim_y:.4f}"
+                result["psnr_y"] = avg_psnr_y
+                result["ssim_y"] = avg_ssim_y
+            
+            logger.info(metric_str)
+            print(metric_str)
+            return result
+        return None
     
     # Training loop
     logger.info(f"\nStarting training for {num_epochs} epochs...")
@@ -436,11 +492,9 @@ def train_super_resolution(
         
         for batch in progress_bar:
             with accelerator.accumulate(unet):
-                # Get images
-                input_images = batch["input"].to(accelerator.device)  # Low-res
-                gt_images = batch["gt"].to(accelerator.device)  # High-res
+                input_images = batch["input"].to(accelerator.device)
+                gt_images = batch["gt"].to(accelerator.device)
                 
-                # Upsample input to match GT size for VAE encoding
                 input_images_upsampled = torch.nn.functional.interpolate(
                     input_images,
                     size=(image_size, image_size),
@@ -448,9 +502,7 @@ def train_super_resolution(
                     align_corners=False
                 )
                 
-                # Encode images with VAE
                 with torch.no_grad():
-                    # Ensure input images match VAE dtype
                     input_images_encoded = input_images_upsampled.to(vae.dtype)
                     gt_images_encoded = gt_images.to(vae.dtype)
                     input_latents = vae.encode(input_images_encoded).latent_dist.sample()
@@ -458,28 +510,20 @@ def train_super_resolution(
                     input_latents = input_latents * vae.config.scaling_factor
                     gt_latents = gt_latents * vae.config.scaling_factor
                 
-                # For super-resolution: use standard DDPM approach
-                # Add noise to the CLEAN ground truth (high-res image), predict that noise
-                # Condition on the low-res upsampled input to learn super-resolution
-                
-                # Sample timesteps - use full range for better learning
                 timesteps = torch.randint(
                     0, noise_scheduler.config.num_train_timesteps,
                     (gt_latents.shape[0],),
                     device=gt_latents.device
                 ).long()
                 
-                # Add noise to the CLEAN ground truth (standard diffusion training)
-                # This simulates the super-resolution process: we'll learn to remove this noise
                 noise = torch.randn_like(gt_latents)
                 noisy_gt_latents = noise_scheduler.add_noise(gt_latents, noise, timesteps)
                 
-                # Blend low-res input with noisy GT for conditioning
+                # Uses "soft conditioning" via latent blending (see train_denoising.py for details)
                 alpha = timesteps.float() / noise_scheduler.config.num_train_timesteps
                 alpha = alpha.view(-1, 1, 1, 1)
                 model_input = (1 - alpha) * input_latents + alpha * noisy_gt_latents
                 
-                # Prepare text embeddings (use a simple prompt for super-resolution)
                 prompt = "high quality, detailed, sharp, high resolution photo"
                 text_inputs = tokenizer(
                     prompt,
@@ -502,9 +546,27 @@ def train_super_resolution(
                 ).sample
                 
                 noise = noise.to(noise_pred.dtype)
-                loss = torch.nn.functional.mse_loss(noise_pred, noise)
+                noise_pred_loss = torch.nn.functional.mse_loss(noise_pred, noise)
                 
-                # Backward pass
+                img_loss = 0.0
+                if lambda_img > 0.0:
+                    alpha_cumprod_t = noise_scheduler.alphas_cumprod[timesteps]
+                    alpha_cumprod_t = alpha_cumprod_t.view(-1, 1, 1, 1).to(noisy_gt_latents.device)
+                    sqrt_alpha_cumprod = torch.sqrt(alpha_cumprod_t)
+                    sqrt_one_minus_alpha_cumprod = torch.sqrt(1.0 - alpha_cumprod_t)
+                    
+                    pred_clean_latents = (noisy_gt_latents - sqrt_one_minus_alpha_cumprod * noise_pred) / sqrt_alpha_cumprod
+                    
+                    with torch.no_grad():
+                        pred_clean_latents_scaled = pred_clean_latents / vae.config.scaling_factor
+                        pred_img = vae.decode(pred_clean_latents_scaled.to(vae.dtype)).sample
+                        pred_img = (pred_img + 1.0) / 2.0
+                    
+                    gt_images_normalized = (gt_images + 1.0) / 2.0
+                    img_loss = torch.mean(torch.abs(pred_img - gt_images_normalized))
+                
+                loss = noise_pred_loss + lambda_img * img_loss
+                
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -513,13 +575,13 @@ def train_super_resolution(
                 if global_step % 10 == 0:
                     torch.cuda.empty_cache()
             
-            train_loss += loss.item()
+            train_loss += loss.detach().item()
             global_step += 1
             num_batches += 1
             
             # Show running average loss in progress bar
-            avg_loss_so_far = train_loss / num_batches
-            progress_bar.set_postfix({"loss": f"{avg_loss_so_far:.4f}", "batch_loss": f"{loss.item():.4f}"})
+            avg_loss_so_far = train_loss / max(1, num_batches)
+            progress_bar.set_postfix({"loss": f"{avg_loss_so_far:.4f}", "batch_loss": f"{loss.detach().item():.4f}"})
             
             # Save checkpoint (if save_steps > 0, save every N steps; if 0, save at epoch end; if -1, skip)
             if save_steps > 0 and global_step % save_steps == 0:
@@ -527,7 +589,6 @@ def train_super_resolution(
                     checkpoint_dir = output_dir / f"checkpoint-{global_step}"
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Save UNet
                     unet_to_save = accelerator.unwrap_model(unet)
                     unet_to_save.save_pretrained(checkpoint_dir / "unet")
                     
@@ -537,7 +598,7 @@ def train_super_resolution(
                             handler.flush()
                     print(f"\nSaved checkpoint at step {global_step}")
         
-        avg_loss = train_loss / len(train_loader)
+        avg_loss = train_loss / max(1, num_batches)
         logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
         # Force flush to ensure log is written immediately
         for handler in logger.handlers:
@@ -552,7 +613,6 @@ def train_super_resolution(
                 checkpoint_dir = output_dir / f"checkpoint-epoch-{epoch+1}"
                 checkpoint_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Save UNet
                 unet_to_save = accelerator.unwrap_model(unet)
                 unet_to_save.eval()
                 unet_to_save.save_pretrained(
@@ -570,106 +630,118 @@ def train_super_resolution(
         
         # Run validation every epoch for consistent monitoring across all tasks
         if val_dataset is not None and accelerator.is_main_process:
-            run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2)
+            val_stats = run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2, image_size=image_size)
+            if val_stats is not None:
+                psnr = val_stats["psnr"]
+                # Check if this is the best model so far
+                if psnr > best_val_metric:
+                    best_val_metric = psnr
+                    accelerator.wait_for_everyone()
+                    if accelerator.is_main_process:
+                        unet_to_save = accelerator.unwrap_model(unet)
+                        pipeline.unet = unet_to_save
+                        save_dir = best_checkpoint_dir
+                        pipeline.save_pretrained(save_dir)
+                        logger.info(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
+                        print(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
+                
+                # Log metrics to CSV
+                with open(metrics_file, "a") as f:
+                    lpips_val = val_stats.get('lpips', float('nan'))
+                    psnr_y_val = val_stats.get('psnr_y', float('nan'))
+                    ssim_y_val = val_stats.get('ssim_y', float('nan'))
+                    f.write(f"{epoch+1},{val_stats['psnr']:.4f},{val_stats['ssim']:.4f},"
+                            f"{lpips_val:.4f},{psnr_y_val:.4f},{ssim_y_val:.4f},{avg_loss:.6f}\n")
     
-    # Save final model
-    print("\nSaving final model...")
-    logger.info("Saving final model...")
-    final_dir = output_dir / "final"
-    final_dir.mkdir(parents=True, exist_ok=True)
-    
-    print("  Saving UNet...")
-    unet_to_save = accelerator.unwrap_model(unet)
-    unet_to_save.eval()
-    
-    # Disable gradient checkpointing temporarily for saving (if enabled)
-    was_checkpointing = False
-    if hasattr(unet_to_save, "gradient_checkpointing") and unet_to_save.gradient_checkpointing:
-        was_checkpointing = True
-        unet_to_save.disable_gradient_checkpointing()
-    
-    unet_dir = final_dir / "unet"
-    unet_dir.mkdir(parents=True, exist_ok=True)
-    
-    # First, save config.json using save_pretrained (this always works)
-    try:
-        unet_to_save.save_pretrained(
-            str(unet_dir),
+    if accelerator.is_main_process:
+        print("\nSaving final model...")
+        logger.info("Saving final model...")
+        final_dir = output_dir / "final"
+        final_dir.mkdir(parents=True, exist_ok=True)
+        
+        print("  Saving UNet...")
+        unet_to_save = accelerator.unwrap_model(unet)
+        unet_to_save.eval()
+        
+        was_checkpointing = False
+        if hasattr(unet_to_save, "gradient_checkpointing") and unet_to_save.gradient_checkpointing:
+            was_checkpointing = True
+            unet_to_save.disable_gradient_checkpointing()
+        
+        unet_dir = final_dir / "unet"
+        unet_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            unet_to_save.save_pretrained(
+                str(unet_dir),
+                safe_serialization=True,
+                is_main_process=True
+            )
+            logger.info(f"UNet config saved to {unet_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to save UNet config via save_pretrained: {e}")
+        
+        print("  Saving UNet weights directly...")
+        try:
+            from safetensors.torch import save_file
+            import json
+            
+            state_dict = unet_to_save.state_dict()
+            weight_path = unet_dir / "diffusion_pytorch_model.safetensors"
+            
+            save_file(state_dict, str(weight_path))
+            
+            if weight_path.exists() and weight_path.stat().st_size > 0:
+                file_size_mb = weight_path.stat().st_size / (1024 * 1024)
+                print(f"  UNet weights saved successfully: {weight_path.name} ({file_size_mb:.2f} MB)")
+                logger.info(f"UNet weights saved: {weight_path} ({file_size_mb:.2f} MB)")
+            else:
+                raise RuntimeError(f"Weight file {weight_path} was not created or is empty")
+            
+            config_path = unet_dir / "config.json"
+            if not config_path.exists():
+                logger.warning("config.json missing, saving it now...")
+                config_dict = unet_to_save.config.to_dict()
+                with open(config_path, 'w') as f:
+                    json.dump(config_dict, f, indent=2)
+                logger.info(f"UNet config.json saved to {config_path}")
+                
+        except ImportError:
+            logger.error("safetensors library not available - cannot save UNet weights")
+            raise RuntimeError("safetensors library is required to save UNet weights")
+        except Exception as e:
+            logger.error(f"Failed to save UNet weights: {e}", exc_info=True)
+            print(f"  ERROR: Failed to save UNet weights: {e}")
+            raise
+        finally:
+            if was_checkpointing and hasattr(unet_to_save, "enable_gradient_checkpointing"):
+                unet_to_save.enable_gradient_checkpointing()
+        
+        print("  Saving full pipeline (this may take a few minutes)...")
+        pipeline.unet = unet_to_save
+        pipeline.vae.eval()
+        pipeline.text_encoder.eval()
+        pipeline.save_pretrained(
+            final_dir,
             safe_serialization=True,
             is_main_process=True
         )
-        logger.info(f"UNet config saved to {unet_dir}")
-    except Exception as e:
-        logger.warning(f"Failed to save UNet config via save_pretrained: {e}")
-    
-    # Always save weights directly using safetensors (more reliable)
-    print("  Saving UNet weights directly...")
-    try:
-        from safetensors.torch import save_file
-        import json
+        print("  Pipeline saved (UNet, VAE, text_encoder, tokenizer, scheduler)")
         
-        # Get state dict
-        state_dict = unet_to_save.state_dict()
-        weight_path = unet_dir / "diffusion_pytorch_model.safetensors"
+        training_end_time = datetime.now()
+        training_duration = training_end_time - training_start_time
+        logger.info(f"Training complete! Model saved to: {final_dir}")
+        logger.info(f"Final model contains: UNet, VAE, text_encoder, tokenizer, scheduler")
+        logger.info(f"Training completed at: {training_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Total training duration: {training_duration}")
+        logger.info(f"Average time per epoch: {training_duration / num_epochs}")
+        for handler in logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                handler.flush()
         
-        # Save weights
-        save_file(state_dict, str(weight_path))
-        
-        # Verify file was created and has size > 0
-        if weight_path.exists() and weight_path.stat().st_size > 0:
-            file_size_mb = weight_path.stat().st_size / (1024 * 1024)
-            print(f"  UNet weights saved successfully: {weight_path.name} ({file_size_mb:.2f} MB)")
-            logger.info(f"UNet weights saved: {weight_path} ({file_size_mb:.2f} MB)")
-        else:
-            raise RuntimeError(f"Weight file {weight_path} was not created or is empty")
-        
-        # Ensure config.json exists
-        config_path = unet_dir / "config.json"
-        if not config_path.exists():
-            logger.warning("config.json missing, saving it now...")
-            config_dict = unet_to_save.config.to_dict()
-            with open(config_path, 'w') as f:
-                json.dump(config_dict, f, indent=2)
-            logger.info(f"UNet config.json saved to {config_path}")
-            
-    except ImportError:
-        logger.error("safetensors library not available - cannot save UNet weights")
-        raise RuntimeError("safetensors library is required to save UNet weights")
-    except Exception as e:
-        logger.error(f"Failed to save UNet weights: {e}", exc_info=True)
-        print(f"  ERROR: Failed to save UNet weights: {e}")
-        raise
-    finally:
-        if was_checkpointing and hasattr(unet_to_save, "enable_gradient_checkpointing"):
-            unet_to_save.enable_gradient_checkpointing()
-    
-    # Save full pipeline (all components: UNet, VAE, text_encoder, tokenizer, scheduler)
-    print("  Saving full pipeline (this may take a few minutes)...")
-    pipeline.unet = unet_to_save
-    pipeline.vae.eval()
-    pipeline.text_encoder.eval()
-    pipeline.save_pretrained(
-        final_dir,
-        safe_serialization=True,
-        is_main_process=True
-    )
-    print("  Pipeline saved (UNet, VAE, text_encoder, tokenizer, scheduler)")
-    
-    training_end_time = datetime.now()
-    training_duration = training_end_time - training_start_time
-    logger.info(f"Training complete! Model saved to: {final_dir}")
-    logger.info(f"Final model contains: UNet, VAE, text_encoder, tokenizer, scheduler")
-    logger.info(f"Training completed at: {training_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"Total training duration: {training_duration}")
-    logger.info(f"Average time per epoch: {training_duration / num_epochs}")
-    # Final flush
-    for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler):
-            handler.flush()
-    
-    print(f"\nTraining complete! Model saved to: {final_dir}")
-    print(f"To use the fine-tuned model, update inference.py to load from: {final_dir}")
-    print(f"Full log saved to: {log_file}")
+        print(f"\nTraining complete! Model saved to: {final_dir}")
+        print(f"To use the fine-tuned model, update inference.py to load from: {final_dir}")
+        print(f"Full log saved to: {log_file}")
 
 
 if __name__ == "__main__":
@@ -702,9 +774,11 @@ if __name__ == "__main__":
                        help="Limit number of training samples for quick test (default: None, use all)")
     parser.add_argument("--max_val_samples", type=int, default=None,
                        help="Limit number of validation samples for quick test (default: None, use all)")
-    parser.add_argument("--base_model", type=str, default="runwayml/stable-diffusion-v1-5",
+    parser.add_argument("--lambda_img", type=float, default=0.05,
+                       help="Weight for image-space L1 loss (0.0 to disable, default: 0.05)")
+    parser.add_argument("--base_model", type=str, default="sd-legacy/stable-diffusion-v1-5",
                        help="Base model to fine-tune from. Options: "
-                            "'runwayml/stable-diffusion-v1-5' (default, publicly accessible), "
+                            "'sd-legacy/stable-diffusion-v1-5' (default, publicly accessible), "
                             "'stabilityai/stable-diffusion-xl-base-1.0' (better quality, 3.5B parameters, publicly accessible).")
     
     args = parser.parse_args()
@@ -724,6 +798,7 @@ if __name__ == "__main__":
         args.image_size,
         args.max_train_samples,
         args.max_val_samples,
-        args.base_model
+        args.base_model,
+        args.lambda_img
     )
 

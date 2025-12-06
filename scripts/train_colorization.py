@@ -32,24 +32,18 @@ class ColorizationDataset(Dataset):
         self.gt_dir = Path(gt_dir)
         self.image_size = image_size
         
-        # Get all image files
-        # Input files are .png (grayscale), GT files are .jpg
         input_files = sorted(list(self.input_dir.glob("*.jpg")) + list(self.input_dir.glob("*.png")))
         self.files = []
         for f in input_files:
-            # Try to find matching GT file (could be .jpg or .png)
             gt_path_jpg = self.gt_dir / f"{f.stem}.jpg"
             gt_path_png = self.gt_dir / f"{f.stem}.png"
             if gt_path_jpg.exists() or gt_path_png.exists():
                 self.files.append(f)
         
-        # Limit samples for quick testing
         if max_samples is not None and max_samples > 0:
             self.files = self.files[:max_samples]
         
         print(f"Found {len(self.files)} colorization pairs" + (f" (limited to {max_samples} for quick test)" if max_samples else ""))
-        
-        # Transform: resize to 512x512, convert to tensor, normalize to [-1, 1]
         self.transform = transforms.Compose([
             transforms.Resize((image_size, image_size), Image.LANCZOS),
             transforms.ToTensor(),
@@ -61,18 +55,12 @@ class ColorizationDataset(Dataset):
     
     def __getitem__(self, idx):
         input_path = self.files[idx]
-        # GT file might be .jpg or .png (match by stem)
         gt_path_jpg = self.gt_dir / f"{input_path.stem}.jpg"
         gt_path_png = self.gt_dir / f"{input_path.stem}.png"
         gt_path = gt_path_jpg if gt_path_jpg.exists() else gt_path_png
         
-        # Load images
-        # Note: Input is 1-channel grayscale PNG, but .convert("RGB") expands it to 3-channel
-        # (repeating the grayscale channel) which is required for diffusion models
         input_img = Image.open(input_path).convert("RGB")
         gt_img = Image.open(gt_path).convert("RGB")
-        
-        # Apply transforms
         input_tensor = self.transform(input_img)
         gt_tensor = self.transform(gt_img)
         
@@ -97,7 +85,7 @@ def train_colorization(
     image_size: int = 256,  # Reduced from 512 to save memory
     max_train_samples: int = None,  # Limit training samples for quick test
     max_val_samples: int = None,  # Limit validation samples for quick test
-    base_model: str = "runwayml/stable-diffusion-v1-5"  # Base model to fine-tune from
+    base_model: str = "sd-legacy/stable-diffusion-v1-5"  # Base model to fine-tune from
 ):
     """Fine-tune Stable Diffusion for colorization."""
     
@@ -112,11 +100,10 @@ def train_colorization(
         handlers=[
             logging.FileHandler(log_file, mode='a')  # Append mode
         ],
-        force=True  # Override any existing configuration
+        force=True
     )
     logger = logging.getLogger(__name__)
     
-    # Ensure file handler flushes immediately
     for handler in logger.handlers:
         if isinstance(handler, logging.FileHandler):
             handler.setLevel(logging.INFO)
@@ -161,11 +148,9 @@ def train_colorization(
         mixed_precision="fp16" if torch.cuda.is_available() else "no"
     )
     
-    # Load pre-trained model
     print(f"\nLoading pre-trained Stable Diffusion Img2Img...")
     print(f"Using base model: {base_model}")
     
-    # Get Hugging Face token if available
     hf_token = os.environ.get("HF_TOKEN", None)
     if hf_token:
         print("Hugging Face token detected")
@@ -221,13 +206,22 @@ def train_colorization(
         len(train_dataset_temp) * num_epochs // (batch_size * gradient_accumulation_steps)
     )
     lr_scheduler = get_scheduler(
-        "constant",
+        "cosine",
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=int(num_train_steps * 0.05),  # 5% warmup
         num_training_steps=num_train_steps
     )
     
-    # Setup datasets
+    # Track best model
+    best_val_metric = -float("inf")  # PSNR (higher is better)
+    best_checkpoint_dir = output_dir / "best"
+    best_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Setup metrics CSV file
+    metrics_file = output_dir / "metrics.csv"
+    if accelerator.is_main_process and not metrics_file.exists():
+        with open(metrics_file, "w") as f:
+            f.write("epoch,psnr,ssim,lpips,psnr_l,ssim_l,delta_e,train_loss\n")
     train_dataset = ColorizationDataset(train_input_dir, train_gt_dir, image_size=image_size, max_samples=max_train_samples)
     val_dataset = ColorizationDataset(val_input_dir, val_gt_dir, image_size=image_size, max_samples=max_val_samples) if val_input_dir.exists() else None
     
@@ -243,8 +237,6 @@ def train_colorization(
             num_workers=0,
             pin_memory=True if torch.cuda.is_available() else False
         )
-    
-    # Setup noise scheduler
     noise_scheduler = DDPMScheduler.from_config(pipeline.scheduler.config)
     
     vae = vae.to(accelerator.device)
@@ -252,7 +244,6 @@ def train_colorization(
     vae.eval()
     text_encoder.eval()
     
-    # Prepare with accelerator
     unet, optimizer, train_loader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_loader, lr_scheduler
     )
@@ -263,12 +254,14 @@ def train_colorization(
     logger.info(f"VAE scaling factor: {vae.config.scaling_factor}")
     print(f"Batches per epoch: {len(train_loader)}")
     print(f"Trainable UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,}")
-    
-    # Validation function
     def run_validation(epoch: int, val_dataset, pipeline, unet_model, output_dir: Path, num_samples: int = 4):
-        """Run validation: sample images, compute metrics, save comparisons."""
+        """Run validation: sample images, compute metrics, save comparisons.
+        
+        Returns:
+            dict with keys 'psnr', 'ssim', 'lpips' (if available), or None if validation skipped
+        """
         if val_dataset is None or len(val_dataset) == 0:
-            return
+            return None
         
         val_output_dir = output_dir / "val_samples"
         val_output_dir.mkdir(parents=True, exist_ok=True)
@@ -280,10 +273,41 @@ def train_colorization(
         psnr_values = []
         ssim_values = []
         lpips_values = []
+        psnr_l_values = []  # L-channel (LAB) PSNR for structure
+        ssim_l_values = []  # L-channel (LAB) SSIM for structure
+        delta_e_values = []  # ΔE for color error
         
         # Initialize metrics calculator (use GPU if available for LPIPS)
         device_for_metrics = accelerator.device if torch.cuda.is_available() else "cpu"
         metrics_calc = MetricsCalculator(use_lpips=True, use_fid=False, device=device_for_metrics)
+        
+        # Helper function to compute L-channel metrics (LAB L channel) and ΔE
+        def compute_lab_metrics(result_np, gt_np):
+            """Compute PSNR/SSIM on L channel of LAB color space and ΔE color error."""
+            from skimage import color
+            from skimage.metrics import peak_signal_noise_ratio as psnr
+            from skimage.metrics import structural_similarity as ssim
+            
+            # Convert RGB [0-255] to LAB
+            result_rgb = result_np.astype(np.float32) / 255.0
+            gt_rgb = gt_np.astype(np.float32) / 255.0
+            
+            result_lab = color.rgb2lab(result_rgb)
+            gt_lab = color.rgb2lab(gt_rgb)
+            
+            # Extract L channel (lightness/luminance) for structure metrics
+            result_l = result_lab[:, :, 0]
+            gt_l = gt_lab[:, :, 0]
+            
+            # L channel is in [0, 100] range
+            psnr_l = psnr(gt_l, result_l, data_range=100.0)
+            ssim_l = ssim(gt_l, result_l, data_range=100.0)
+            
+            # Compute ΔE (Euclidean distance in LAB)
+            delta_e = np.sqrt(np.sum((result_lab - gt_lab) ** 2, axis=2))
+            avg_delta_e = np.mean(delta_e)
+            
+            return psnr_l, ssim_l, avg_delta_e
         
         # Temporarily update pipeline with current UNet
         pipeline.unet = accelerator.unwrap_model(unet_model)
@@ -311,12 +335,10 @@ def train_colorization(
                     input_img = sample["input"]
                     gt_img = sample["gt"]
                     
-                    # Denormalize input for visualization
                     input_vis = (input_img + 1.0) / 2.0
                     input_vis = torch.clamp(input_vis, 0, 1)
                     input_pil = transforms.ToPILImage()(input_vis)
                     
-                    # Run inference
                     prompt = "realistic natural colors, high quality photo, detailed"
                     result = pipeline(
                         prompt=prompt,
@@ -326,63 +348,80 @@ def train_colorization(
                         guidance_scale=7.0
                     ).images[0]
                     
-                    # Convert to numpy for metrics
                     result_np = np.array(result)
                     gt_vis = (gt_img + 1.0) / 2.0
                     gt_vis = torch.clamp(gt_vis, 0, 1)
                     gt_np = (gt_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
                     
-                    # Resize result to match GT if needed
                     if result_np.shape[:2] != gt_np.shape[:2]:
                         result_np = cv2.resize(result_np, (gt_np.shape[1], gt_np.shape[0]))
-                    
-                    # Compute metrics using MetricsCalculator (includes PSNR, SSIM, LPIPS)
                     try:
                         metrics = metrics_calc.calculate_all(result_np, gt_np)
-                        psnr_values.append(metrics['psnr'])
-                        ssim_values.append(metrics['ssim'])
+                        psnr_rgb = metrics['psnr']
+                        ssim_rgb = metrics['ssim']
+                        psnr_values.append(psnr_rgb)
+                        ssim_values.append(ssim_rgb)
                         if metrics.get('lpips') is not None:
                             lpips_values.append(metrics['lpips'])
                     except Exception as e:
-                        # Fallback to basic metrics if LPIPS fails
                         try:
                             from skimage.metrics import peak_signal_noise_ratio as psnr
                             from skimage.metrics import structural_similarity as ssim
-                            psnr_val = psnr(gt_np, result_np, data_range=255.0)
-                            ssim_val = ssim(gt_np, result_np, data_range=255.0, channel_axis=2)
-                            psnr_values.append(psnr_val)
-                            ssim_values.append(ssim_val)
+                            psnr_rgb = psnr(gt_np, result_np, data_range=255.0)
+                            ssim_rgb = ssim(gt_np, result_np, data_range=255.0, channel_axis=2)
+                            psnr_values.append(psnr_rgb)
+                            ssim_values.append(ssim_rgb)
                         except ImportError:
-                            pass
+                            psnr_rgb = None
+                            ssim_rgb = None
                     
-                    # Create side-by-side comparison
+                    if psnr_rgb is not None:
+                        try:
+                            psnr_l, ssim_l, delta_e = compute_lab_metrics(result_np, gt_np)
+                            psnr_l_values.append(psnr_l)
+                            ssim_l_values.append(ssim_l)
+                            delta_e_values.append(delta_e)
+                        except Exception as e:
+                            logger.warning(f"Failed to compute LAB metrics for sample {idx}: {e}")
+                    
                     input_np = (input_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-                    # Resize input to match if needed
                     if input_np.shape[:2] != gt_np.shape[:2]:
                         input_np = cv2.resize(input_np, (gt_np.shape[1], gt_np.shape[0]))
                     comparison = np.hstack([input_np, result_np, gt_np])
                     comparison_pil = Image.fromarray(comparison)
                     
-                    # Save comparison (overwrite if exists)
-                    # Use sequential number (i+1) and dataset index for clarity
                     save_path = val_output_dir / f"epoch_{epoch+1}_sample_{i+1}_idx{idx}.png"
                     comparison_pil.save(save_path)
         finally:
             pipeline.unet.train()
             torch.cuda.empty_cache()
         
-            # Log metrics
-            if psnr_values:
-                avg_psnr = np.mean(psnr_values)
-                avg_ssim = np.mean(ssim_values)
-                metric_str = f"Validation (epoch {epoch+1}): PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
-                
-                if lpips_values:
-                    avg_lpips = np.mean(lpips_values)
-                    metric_str += f", LPIPS={avg_lpips:.4f}"
-                
-                logger.info(metric_str)
-                print(metric_str)
+        if psnr_values:
+            avg_psnr = np.mean(psnr_values)
+            avg_ssim = np.mean(ssim_values)
+            metric_str = f"Validation (epoch {epoch+1}): RGB PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
+            
+            result = {"psnr": avg_psnr, "ssim": avg_ssim}
+            
+            if lpips_values:
+                avg_lpips = np.mean(lpips_values)
+                metric_str += f", LPIPS={avg_lpips:.4f}"
+                result["lpips"] = avg_lpips
+            
+            if psnr_l_values:
+                avg_psnr_l = np.mean(psnr_l_values)
+                avg_ssim_l = np.mean(ssim_l_values)
+                avg_delta_e = np.mean(delta_e_values)
+                metric_str += f"\n  Structure (L-channel): PSNR={avg_psnr_l:.2f} dB, SSIM={avg_ssim_l:.4f}"
+                metric_str += f"\n  Color (ΔE): {avg_delta_e:.2f}"
+                result["psnr_l"] = avg_psnr_l
+                result["ssim_l"] = avg_ssim_l
+                result["delta_e"] = avg_delta_e
+            
+            logger.info(metric_str)
+            print(metric_str)
+            return result
+        return None
     
         # Training loop
         logger.info(f"\nStarting training for {num_epochs} epochs...")
@@ -399,28 +438,22 @@ def train_colorization(
     for epoch in range(num_epochs):
         unet.train()
         train_loss = 0.0
+        num_batches = 0
         
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
         
         for batch in progress_bar:
             with accelerator.accumulate(unet):
-                # Get images
                 input_images = batch["input"].to(accelerator.device)
                 gt_images = batch["gt"].to(accelerator.device)
                 
-                # Encode images with VAE
                 with torch.no_grad():
-                    # Ensure input images match VAE dtype
                     input_images_encoded = input_images.to(vae.dtype)
                     gt_images_encoded = gt_images.to(vae.dtype)
                     input_latents = vae.encode(input_images_encoded).latent_dist.sample()
                     gt_latents = vae.encode(gt_images_encoded).latent_dist.sample()
                     input_latents = input_latents * vae.config.scaling_factor
                     gt_latents = gt_latents * vae.config.scaling_factor
-                
-                # For colorization: use standard DDPM approach
-                # Add noise to the CLEAN ground truth (color image), predict that noise
-                # Condition on the grayscale input to learn colorization
                 
                 # Sample timesteps - use full range for better learning
                 timesteps = torch.randint(
@@ -429,17 +462,15 @@ def train_colorization(
                     device=gt_latents.device
                 ).long()
                 
-                # Add noise to the CLEAN ground truth (standard diffusion training)
-                # This simulates the colorization process: we'll learn to remove this noise
                 noise = torch.randn_like(gt_latents)
                 noisy_gt_latents = noise_scheduler.add_noise(gt_latents, noise, timesteps)
                 
-                # Blend grayscale input with noisy GT for conditioning
+                # Uses "soft conditioning" via latent blending (see train_denoising.py for details)
+                # Inference parameters: strength=0.6, guidance_scale=7.0
                 alpha = timesteps.float() / noise_scheduler.config.num_train_timesteps
                 alpha = alpha.view(-1, 1, 1, 1)
                 model_input = (1 - alpha) * input_latents + alpha * noisy_gt_latents
                 
-                # Prepare text embeddings (use a simple prompt)
                 prompt = "realistic natural colors, high quality photo"
                 text_inputs = tokenizer(
                     prompt,
@@ -464,7 +495,6 @@ def train_colorization(
                 noise = noise.to(noise_pred.dtype)
                 loss = torch.nn.functional.mse_loss(noise_pred, noise)
                 
-                # Backward pass
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -473,19 +503,19 @@ def train_colorization(
                 if global_step % 10 == 0:
                     torch.cuda.empty_cache()
             
-            train_loss += loss.item()
+            train_loss += loss.detach().item()
+            num_batches += 1
             global_step += 1
             
-            progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+            avg_loss_so_far = train_loss / max(1, num_batches)
+            progress_bar.set_postfix({"loss": f"{avg_loss_so_far:.4f}", "batch_loss": f"{loss.detach().item():.4f}"})
             
-            # Save checkpoint (if save_steps > 0, save every N steps; if 0, save at epoch end; if -1, skip)
             if save_steps > 0 and global_step % save_steps == 0:
                 if accelerator.is_main_process:
                     checkpoint_dir = output_dir / f"checkpoint-{global_step}"
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)
                     
-                # Save UNet
-                unet_to_save = accelerator.unwrap_model(unet)
+                    unet_to_save = accelerator.unwrap_model(unet)
                 unet_to_save.eval()
                 unet_to_save.save_pretrained(
                     checkpoint_dir / "unet",
@@ -499,9 +529,8 @@ def train_colorization(
                         handler.flush()
                 print(f"\nSaved checkpoint at step {global_step}")
         
-        avg_loss = train_loss / len(train_loader)
+        avg_loss = train_loss / max(1, num_batches)
         logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
-        # Force flush to ensure log is written immediately
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler):
                 handler.flush()
@@ -514,7 +543,6 @@ def train_colorization(
                 checkpoint_dir = output_dir / f"checkpoint-epoch-{epoch+1}"
                 checkpoint_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Save UNet
                 unet_to_save = accelerator.unwrap_model(unet)
                 unet_to_save.eval()
                 unet_to_save.save_pretrained(
@@ -532,7 +560,27 @@ def train_colorization(
         
         # Run validation every epoch for consistent monitoring across all tasks
         if val_dataset is not None and accelerator.is_main_process:
-            run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2)
+            val_stats = run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2)
+            if val_stats is not None:
+                psnr = val_stats["psnr"]
+                if psnr > best_val_metric:
+                    best_val_metric = psnr
+                    accelerator.wait_for_everyone()
+                    if accelerator.is_main_process:
+                        unet_to_save = accelerator.unwrap_model(unet)
+                        pipeline.unet = unet_to_save
+                        save_dir = best_checkpoint_dir
+                        pipeline.save_pretrained(save_dir)
+                        logger.info(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
+                        print(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
+                
+                with open(metrics_file, "a") as f:
+                    lpips_val = val_stats.get('lpips', float('nan'))
+                    psnr_l_val = val_stats.get('psnr_l', float('nan'))
+                    ssim_l_val = val_stats.get('ssim_l', float('nan'))
+                    delta_e_val = val_stats.get('delta_e', float('nan'))
+                    f.write(f"{epoch+1},{val_stats['psnr']:.4f},{val_stats['ssim']:.4f},"
+                            f"{lpips_val:.4f},{psnr_l_val:.4f},{ssim_l_val:.4f},{delta_e_val:.4f},{avg_loss:.6f}\n")
     
     # Save final model
     print("\nSaving final model...")
@@ -544,7 +592,6 @@ def train_colorization(
     unet_to_save = accelerator.unwrap_model(unet)
     unet_to_save.eval()
     
-    # Disable gradient checkpointing temporarily for saving (if enabled)
     was_checkpointing = False
     if hasattr(unet_to_save, "gradient_checkpointing") and unet_to_save.gradient_checkpointing:
         was_checkpointing = True
@@ -553,7 +600,6 @@ def train_colorization(
     unet_dir = final_dir / "unet"
     unet_dir.mkdir(parents=True, exist_ok=True)
     
-    # First, save config.json using save_pretrained (this always works)
     try:
         unet_to_save.save_pretrained(
             str(unet_dir),
@@ -585,7 +631,6 @@ def train_colorization(
         else:
             raise RuntimeError(f"Weight file {weight_path} was not created or is empty")
         
-        # Ensure config.json exists
         config_path = unet_dir / "config.json"
         if not config_path.exists():
             logger.warning("config.json missing, saving it now...")
@@ -605,7 +650,6 @@ def train_colorization(
         if was_checkpointing and hasattr(unet_to_save, "enable_gradient_checkpointing"):
             unet_to_save.enable_gradient_checkpointing()
     
-    # Save full pipeline (all components: UNet, VAE, text_encoder, tokenizer, scheduler)
     print("  Saving full pipeline (this may take a few minutes)...")
     pipeline.unet = unet_to_save
     pipeline.vae.eval()
@@ -624,7 +668,6 @@ def train_colorization(
     logger.info(f"Training completed at: {training_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"Total training duration: {training_duration}")
     logger.info(f"Average time per epoch: {training_duration / num_epochs}")
-    # Final flush
     for handler in logger.handlers:
         if isinstance(handler, logging.FileHandler):
             handler.flush()
@@ -664,9 +707,9 @@ if __name__ == "__main__":
                        help="Limit number of training samples for quick test (default: None, use all)")
     parser.add_argument("--max_val_samples", type=int, default=None,
                        help="Limit number of validation samples for quick test (default: None, use all)")
-    parser.add_argument("--base_model", type=str, default="runwayml/stable-diffusion-v1-5",
+    parser.add_argument("--base_model", type=str, default="sd-legacy/stable-diffusion-v1-5",
                        help="Base model to fine-tune from. Options: "
-                            "'runwayml/stable-diffusion-v1-5' (default, publicly accessible), "
+                            "'sd-legacy/stable-diffusion-v1-5' (default, publicly accessible), "
                             "'stabilityai/stable-diffusion-xl-base-1.0' (better quality, dual text encoders, publicly accessible).")
     args = parser.parse_args()
     
