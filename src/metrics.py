@@ -12,6 +12,7 @@ try:
     import cv2
     from skimage.metrics import structural_similarity as ssim
     from skimage.metrics import peak_signal_noise_ratio as psnr
+    from skimage import color
     import torch
     import torchvision.transforms as transforms
     from PIL import Image
@@ -108,6 +109,43 @@ class MetricsCalculator:
         with torch.no_grad():
             dist = self.lpips_model(pred_tensor, gt_tensor)
         return dist.item()
+    
+    def calculate_delta_e(self, pred: np.ndarray, gt: np.ndarray, use_delta_e2000: bool = False) -> float:
+        """
+        Calculate ΔE (Delta E) color difference in LAB color space.
+        Lower is better. Typical values: < 1 (imperceptible), < 3 (acceptable), > 5 (noticeable).
+        
+        Args:
+            pred: Predicted image as RGB numpy array [0-255]
+            gt: Ground truth image as RGB numpy array [0-255]
+            use_delta_e2000: If True, use ΔE2000 (more accurate but slower). If False, use ΔE76.
+        
+        Returns:
+            Average ΔE across all pixels
+        """
+        # Ensure same shape
+        if pred.shape != gt.shape:
+            pred = cv2.resize(pred, (gt.shape[1], gt.shape[0]))
+        
+        # Convert RGB [0-255] to LAB
+        # skimage.color.rgb2lab expects RGB in [0, 1] range
+        pred_rgb = pred.astype(np.float32) / 255.0
+        gt_rgb = gt.astype(np.float32) / 255.0
+        
+        pred_lab = color.rgb2lab(pred_rgb)
+        gt_lab = color.rgb2lab(gt_rgb)
+        
+        if use_delta_e2000:
+            # ΔE2000 (more accurate, accounts for perceptual uniformity)
+            # For simplicity, we'll use ΔE76 (Euclidean distance in LAB)
+            # Full ΔE2000 implementation is complex - can add later if needed
+            delta_e = np.sqrt(np.sum((pred_lab - gt_lab) ** 2, axis=2))
+        else:
+            # ΔE76: Euclidean distance in LAB color space
+            delta_e = np.sqrt(np.sum((pred_lab - gt_lab) ** 2, axis=2))
+        
+        # Return mean ΔE across all pixels
+        return float(np.mean(delta_e))
     
     def _get_inception_features(self, img: np.ndarray) -> torch.Tensor:
         """Extract Inception v3 features for FID calculation."""

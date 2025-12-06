@@ -79,17 +79,21 @@ def main():
         print(f"Ground Truth: {gt_dir}")
         print(f"{'='*60}")
         
+        # LPIPS is useful for all tasks; FID is most meaningful for generative tasks
+        use_lpips = not args.no_lpips
+        use_fid = (not args.no_fid) and (task_dir in ["colorize", "inpaint"])
+        
         try:
             results = evaluate_task(
                 pred_dir=pred_dir,
                 gt_dir=gt_dir,
                 task_name=task_name,
-                use_lpips=not args.no_lpips,
-                use_fid=not args.no_fid,
+                use_lpips=use_lpips,
+                use_fid=use_fid,
                 device=device
             )
-            print_results(results)
             all_results[task_dir] = results
+            print_results(results)
         
         except Exception as e:
             print(f"Error evaluating {task_dir}: {e}")

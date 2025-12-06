@@ -32,23 +32,18 @@ class DenoisingDataset(Dataset):
         self.gt_dir = Path(gt_dir)
         self.image_size = image_size
         
-        # Get all image files
         input_files = sorted(list(self.input_dir.glob("*.jpg")) + list(self.input_dir.glob("*.png")))
         self.files = []
         for f in input_files:
-            # Try to find matching GT file (could be .jpg or .png)
             gt_path_jpg = self.gt_dir / f"{f.stem}.jpg"
             gt_path_png = self.gt_dir / f"{f.stem}.png"
             if gt_path_jpg.exists() or gt_path_png.exists():
                 self.files.append(f)
         
-        # Limit samples for quick testing
         if max_samples is not None and max_samples > 0:
             self.files = self.files[:max_samples]
         
         print(f"Found {len(self.files)} denoising pairs" + (f" (limited to {max_samples} for quick test)" if max_samples else ""))
-        
-        # Transform: resize to image_size, convert to tensor, normalize to [-1, 1]
         self.transform = transforms.Compose([
             transforms.Resize((image_size, image_size), Image.LANCZOS),
             transforms.ToTensor(),
@@ -60,23 +55,30 @@ class DenoisingDataset(Dataset):
     
     def __getitem__(self, idx):
         input_path = self.files[idx]
-        # GT file might be .jpg or .png (match by stem)
         gt_path_jpg = self.gt_dir / f"{input_path.stem}.jpg"
         gt_path_png = self.gt_dir / f"{input_path.stem}.png"
         gt_path = gt_path_jpg if gt_path_jpg.exists() else gt_path_png
         
-        # Load images
         input_img = Image.open(input_path).convert("RGB")
         gt_img = Image.open(gt_path).convert("RGB")
-        
-        # Apply transforms
         input_tensor = self.transform(input_img)
         gt_tensor = self.transform(gt_img)
         
-        return {
+        sigma = None
+        if "_sigma" in input_path.stem:
+            try:
+                sigma = float(input_path.stem.split("_sigma")[-1])
+            except (ValueError, IndexError):
+                pass
+        
+        result = {
             "input": input_tensor,
             "gt": gt_tensor
         }
+        if sigma is not None:
+            result["sigma"] = sigma
+        
+        return result
 
 
 def train_denoising(
@@ -94,7 +96,8 @@ def train_denoising(
     image_size: int = 256,  # Reduced from 512 to save memory
     max_train_samples: int = None,  # Limit training samples for quick test
     max_val_samples: int = None,  # Limit validation samples for quick test
-    base_model: str = "runwayml/stable-diffusion-v1-5"  # Base model to fine-tune
+    base_model: str = "sd-legacy/stable-diffusion-v1-5",  # Base model to fine-tune
+    lambda_img: float = 0.05  # Weight for image-space L1 loss (0.0 to disable)
 ):
     """Fine-tune Stable Diffusion for denoising."""
     
@@ -109,16 +112,14 @@ def train_denoising(
         handlers=[
             logging.FileHandler(log_file, mode='a')  # Append mode
         ],
-        force=True  # Override any existing configuration
+        force=True
     )
     logger = logging.getLogger(__name__)
     
-    # Ensure file handler flushes immediately
     for handler in logger.handlers:
         if isinstance(handler, logging.FileHandler):
             handler.setLevel(logging.INFO)
     
-    # Log start
     training_start_time = datetime.now()
     logger.info("="*60)
     logger.info("Fine-tuning Stable Diffusion for Denoising")
@@ -174,171 +175,165 @@ def train_denoising(
         torch.backends.cudnn.benchmark = True
     
     # Load pre-trained model
-        logger.info("Loading pre-trained Stable Diffusion Img2Img...")
-        print("Loading pre-trained Stable Diffusion Img2Img...")
-        model_id = base_model
-        logger.info(f"Using base model: {model_id}")
-        print(f"Using base model: {model_id}")
-        
-        # Check for HF token
-        hf_token = os.getenv("HF_TOKEN", None)
-        if hf_token:
-            logger.info("Hugging Face token found in environment")
-            print("Hugging Face token detected")
-        else:
-            logger.info("No HF_TOKEN found - using public access")
-            print("No HF_TOKEN set - using public model access")
-        
-        # Check if using SD-XL model
-        is_sdxl = "xl" in model_id.lower() or "stable-diffusion-xl" in model_id.lower()
-        
-        if resume_from:
-            logger.info(f"Resuming from checkpoint: {resume_from}")
-            print(f"Resuming from checkpoint: {resume_from}")
-            # Try to detect if checkpoint is SD-XL or SD v1.5
-            try:
-                pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(resume_from)
-                is_sdxl = True
-            except:
-                pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(resume_from)
-                is_sdxl = False
-        else:
-            # Get Hugging Face token from environment variable
-            hf_token = os.getenv("HF_TOKEN", None)
-            
-            # Load appropriate pipeline based on model
-            if is_sdxl:
-                logger.info("Detected SD-XL model, using StableDiffusionXLImg2ImgPipeline")
-                print("Using SD-XL pipeline")
-                pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-                    model_id,
-                    dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                    use_safetensors=True,
-                    variant="fp16" if torch.cuda.is_available() else None,
-                    token=hf_token,
-                )
-            else:
-                logger.info("Using standard SD v1.5 pipeline")
-                print("Using SD v1.5 pipeline")
-                pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-                    model_id,
-                    dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                    use_safetensors=False,
-                    token=hf_token,  # Use token if available, None for public models
-                )
-            # Disable safety checker immediately after loading
-            if hasattr(pipeline, 'disable_safety_checker'):
-                pipeline.disable_safety_checker()
-            else:
-                # Manual disable if method doesn't exist
-                pipeline.safety_checker = None
-                pipeline.feature_extractor = None
-        
-        unet = pipeline.unet
-        vae = pipeline.vae
-        
-        # Handle SD-XL (dual text encoders) vs SD v1.5 (single text encoder)
-        if is_sdxl:
-            text_encoder = pipeline.text_encoder
-            text_encoder_2 = pipeline.text_encoder_2
-            tokenizer = pipeline.tokenizer
-            tokenizer_2 = pipeline.tokenizer_2
-            # Freeze both text encoders
-            text_encoder.requires_grad_(False)
-            text_encoder_2.requires_grad_(False)
-        else:
-            text_encoder = pipeline.text_encoder
-            tokenizer = pipeline.tokenizer
-            text_encoder_2 = None
-            tokenizer_2 = None
-            text_encoder.requires_grad_(False)
-        
-        # Freeze VAE and train only UNet
-        vae.requires_grad_(False)
-        unet.requires_grad_(True)
-        
-        # Enable gradient checkpointing to save memory
-        if hasattr(unet, "enable_gradient_checkpointing"):
-            unet.enable_gradient_checkpointing()
-            logger.info("Enabled gradient checkpointing to save memory")
-        
-        # Setup optimizer
-        optimizer = torch.optim.AdamW(
-            unet.parameters(),
-            lr=learning_rate,
-            betas=(0.9, 0.999),
-            weight_decay=0.01
-        )
-        
-        # Setup scheduler
-        # Calculate steps based on actual dataset size
-        train_dataset_temp = DenoisingDataset(train_input_dir, train_gt_dir, image_size=image_size)
-        num_train_steps = max(
-            1,
-            len(train_dataset_temp) * num_epochs // (batch_size * gradient_accumulation_steps)
-        )
-        # Use cosine schedule with warmup for better convergence
-        lr_scheduler = get_scheduler(
-            "cosine",
-            optimizer=optimizer,
-            num_warmup_steps=int(num_train_steps * 0.1),  # 10% warmup
-            num_training_steps=num_train_steps
-        )
-        
-        # Setup datasets
-        train_dataset = DenoisingDataset(train_input_dir, train_gt_dir, image_size=image_size, max_samples=max_train_samples)
-        val_dataset = DenoisingDataset(val_input_dir, val_gt_dir, image_size=image_size, max_samples=max_val_samples) if val_input_dir.exists() else None
-        
-        logger.info(f"Training dataset size: {len(train_dataset)} samples")
-        logger.info(f"Validation dataset size: {len(val_dataset) if val_dataset else 0} samples")
-        print(f"Training dataset: {len(train_dataset)} samples")
-        print(f"Validation dataset: {len(val_dataset) if val_dataset else 0} samples")
-        
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=0,
-            pin_memory=True if torch.cuda.is_available() else False
-        )
-        
-        logger.info(f"DataLoader batches per epoch: {len(train_loader)}")
-        print(f"Batches per epoch: {len(train_loader)}")
-        
-        # Setup noise scheduler
-        noise_scheduler = DDPMScheduler.from_config(pipeline.scheduler.config)
-        
-        vae = vae.to(accelerator.device)
-        text_encoder = text_encoder.to(accelerator.device)
-        if is_sdxl and text_encoder_2 is not None:
-            text_encoder_2 = text_encoder_2.to(accelerator.device)
-        
-        vae.eval()
-        text_encoder.eval()
-        if is_sdxl and text_encoder_2 is not None:
-            text_encoder_2.eval()
-        
-        # Prepare with accelerator
-        unet, optimizer, train_loader, lr_scheduler = accelerator.prepare(
-            unet, optimizer, train_loader, lr_scheduler
-        )
-        
-        # Log model configuration
-        logger.info(f"UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,} trainable")
-        logger.info(f"UNet input channels: {unet.config.in_channels}")
-        logger.info(f"UNet output channels: {unet.config.out_channels}")
-        logger.info(f"VAE scaling factor: {vae.config.scaling_factor}")
-        logger.info(f"Text encoder hidden size: {text_encoder.config.hidden_size}")
-        if is_sdxl and text_encoder_2 is not None:
-            logger.info(f"Text encoder 2 hidden size: {text_encoder_2.config.hidden_size}")
-        print(f"Trainable UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,}")
+    logger.info("Loading pre-trained Stable Diffusion Img2Img...")
+    print("Loading pre-trained Stable Diffusion Img2Img...")
+    model_id = base_model
+    logger.info(f"Using base model: {model_id}")
+    print(f"Using base model: {model_id}")
     
-        # Validation function
-        def run_validation(epoch: int, val_dataset, pipeline, unet_model, output_dir: Path, num_samples: int = 4, is_sdxl_model: bool = False):
-            """Run validation: sample images, compute metrics, save comparisons."""
-            if val_dataset is None or len(val_dataset) == 0:
-                logger.warning("Validation dataset is None or empty, skipping validation")
-                return
+    hf_token = os.getenv("HF_TOKEN", None)
+    if hf_token:
+        logger.info("Hugging Face token found in environment")
+        print("Hugging Face token detected")
+    else:
+        logger.info("No HF_TOKEN found - using public access")
+        print("No HF_TOKEN set - using public model access")
+    
+    is_sdxl = "xl" in model_id.lower() or "stable-diffusion-xl" in model_id.lower()
+    
+    if resume_from:
+        logger.info(f"Resuming from checkpoint: {resume_from}")
+        print(f"Resuming from checkpoint: {resume_from}")
+        try:
+            pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(resume_from)
+            is_sdxl = True
+        except:
+            pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(resume_from)
+            is_sdxl = False
+    else:
+        hf_token = os.getenv("HF_TOKEN", None)
+        
+        if is_sdxl:
+            logger.info("Detected SD-XL model, using StableDiffusionXLImg2ImgPipeline")
+            print("Using SD-XL pipeline")
+            pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+                model_id,
+                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                use_safetensors=True,
+                variant="fp16" if torch.cuda.is_available() else None,
+                token=hf_token,
+            )
+        else:
+            logger.info("Using standard SD v1.5 pipeline")
+            print("Using SD v1.5 pipeline")
+            pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                model_id,
+                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                use_safetensors=False,
+                token=hf_token,
+            )
+        if hasattr(pipeline, 'disable_safety_checker'):
+            pipeline.disable_safety_checker()
+        else:
+            pipeline.safety_checker = None
+            pipeline.feature_extractor = None
+    
+    unet = pipeline.unet
+    vae = pipeline.vae
+    
+    if is_sdxl:
+        text_encoder = pipeline.text_encoder
+        text_encoder_2 = pipeline.text_encoder_2
+        tokenizer = pipeline.tokenizer
+        tokenizer_2 = pipeline.tokenizer_2
+        text_encoder.requires_grad_(False)
+        text_encoder_2.requires_grad_(False)
+    else:
+        text_encoder = pipeline.text_encoder
+        tokenizer = pipeline.tokenizer
+        text_encoder_2 = None
+        tokenizer_2 = None
+        text_encoder.requires_grad_(False)
+    
+    vae.requires_grad_(False)
+    unet.requires_grad_(True)
+    
+    if hasattr(unet, "enable_gradient_checkpointing"):
+        unet.enable_gradient_checkpointing()
+        logger.info("Enabled gradient checkpointing to save memory")
+    
+    optimizer = torch.optim.AdamW(
+        unet.parameters(),
+        lr=learning_rate,
+        betas=(0.9, 0.999),
+        weight_decay=0.01
+    )
+    
+    train_dataset_temp = DenoisingDataset(train_input_dir, train_gt_dir, image_size=image_size)
+    num_train_steps = max(
+        1,
+        len(train_dataset_temp) * num_epochs // (batch_size * gradient_accumulation_steps)
+    )
+    lr_scheduler = get_scheduler(
+        "cosine",
+        optimizer=optimizer,
+        num_warmup_steps=int(num_train_steps * 0.05),
+        num_training_steps=num_train_steps
+    )
+    
+    best_val_metric = -float("inf")
+    best_checkpoint_dir = output_dir / "best"
+    best_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    
+    metrics_file = output_dir / "metrics.csv"
+    if accelerator.is_main_process and not metrics_file.exists():
+        with open(metrics_file, "w") as f:
+            f.write("epoch,psnr,ssim,lpips,psnr_y,ssim_y,train_loss\n")
+    
+    train_dataset = DenoisingDataset(train_input_dir, train_gt_dir, image_size=image_size, max_samples=max_train_samples)
+    val_dataset = DenoisingDataset(val_input_dir, val_gt_dir, image_size=image_size, max_samples=max_val_samples) if val_input_dir.exists() else None
+    
+    logger.info(f"Training dataset size: {len(train_dataset)} samples")
+    logger.info(f"Validation dataset size: {len(val_dataset) if val_dataset else 0} samples")
+    print(f"Training dataset: {len(train_dataset)} samples")
+    print(f"Validation dataset: {len(val_dataset) if val_dataset else 0} samples")
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True if torch.cuda.is_available() else False
+    )
+    
+    logger.info(f"DataLoader batches per epoch: {len(train_loader)}")
+    print(f"Batches per epoch: {len(train_loader)}")
+    
+    noise_scheduler = DDPMScheduler.from_config(pipeline.scheduler.config)
+    
+    vae = vae.to(accelerator.device)
+    text_encoder = text_encoder.to(accelerator.device)
+    if is_sdxl and text_encoder_2 is not None:
+        text_encoder_2 = text_encoder_2.to(accelerator.device)
+    
+    vae.eval()
+    text_encoder.eval()
+    if is_sdxl and text_encoder_2 is not None:
+        text_encoder_2.eval()
+    
+    unet, optimizer, train_loader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_loader, lr_scheduler
+    )
+    
+    logger.info(f"UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,} trainable")
+    logger.info(f"UNet input channels: {unet.config.in_channels}")
+    logger.info(f"UNet output channels: {unet.config.out_channels}")
+    logger.info(f"VAE scaling factor: {vae.config.scaling_factor}")
+    logger.info(f"Text encoder hidden size: {text_encoder.config.hidden_size}")
+    if is_sdxl and text_encoder_2 is not None:
+        logger.info(f"Text encoder 2 hidden size: {text_encoder_2.config.hidden_size}")
+    print(f"Trainable UNet parameters: {sum(p.numel() for p in unet.parameters() if p.requires_grad):,}")
+    
+    # Validation function
+    def run_validation(epoch: int, val_dataset, pipeline, unet_model, output_dir: Path, num_samples: int = 4, is_sdxl_model: bool = False):
+        """Run validation: sample images, compute metrics, save comparisons.
+        
+        Returns:
+            dict with keys 'psnr', 'ssim', 'lpips' (if available), or None if validation skipped
+        """
+        if val_dataset is None or len(val_dataset) == 0:
+            logger.warning("Validation dataset is None or empty, skipping validation")
+            return None
             
             val_output_dir = output_dir / "val_samples"
             val_output_dir.mkdir(parents=True, exist_ok=True)
@@ -404,296 +399,365 @@ def train_denoising(
             if is_sdxl_model and hasattr(pipeline, 'text_encoder_2'):
                 pipeline.text_encoder_2.eval()
             
+            # Helper function to compute Y-channel metrics (YCbCr Y channel)
+            def compute_y_channel_metrics(result_np, gt_np):
+                """Compute PSNR/SSIM on Y channel of YCbCr color space."""
+                # Convert to YCbCr
+                result_ycbcr = cv2.cvtColor(result_np, cv2.COLOR_RGB2YCrCb)
+                gt_ycbcr = cv2.cvtColor(gt_np, cv2.COLOR_RGB2YCrCb)
+                
+                # Extract Y channel (luminance)
+                result_y = result_ycbcr[:, :, 0]
+                gt_y = gt_ycbcr[:, :, 0]
+                
+                # Compute metrics on Y channel
+                from skimage.metrics import peak_signal_noise_ratio as psnr
+                from skimage.metrics import structural_similarity as ssim
+                psnr_y = psnr(gt_y, result_y, data_range=255.0)
+                ssim_y = ssim(gt_y, result_y, data_range=255.0)
+                return psnr_y, ssim_y
+            
+            # Track metrics per sigma bucket
+            sigma_buckets = {}  # {sigma: {"psnr": [], "ssim": [], "psnr_y": [], "ssim_y": []}}
+            
             try:
                 with torch.no_grad():
                     for i, idx in enumerate(sample_indices):
                         sample = val_dataset[idx]
                         input_img = sample["input"]
                         gt_img = sample["gt"]
+                        sigma = sample.get("sigma")
                         
-                        # Denormalize input for visualization
                         input_vis = (input_img + 1.0) / 2.0
                         input_vis = torch.clamp(input_vis, 0, 1)
                         input_pil = transforms.ToPILImage()(input_vis)
                         
-                        # Run inference with lower strength for denoising
-                        # Lower strength = more preservation of input structure, less generation
                         prompt = "a photograph, high quality, detailed, sharp"
                         result = pipeline(
                             prompt=prompt,
                             image=input_pil,
                             strength=0.3,  # Lower strength for denoising (preserve more input)
                             num_inference_steps=20,  # Fewer steps for faster validation
-                            guidance_scale=5.0  # Lower guidance for less hallucination
+                            guidance_scale=5.0
                         ).images[0]
                         
-                        # Check if result is black (safety checker might have blocked it)
                         result_np_check = np.array(result)
-                        if result_np_check.sum() < 1000:  # Very dark/black image (threshold adjusted)
+                        if result_np_check.sum() < 1000:
                             logger.warning(f"Sample {idx} produced dark output (sum={result_np_check.sum()}) - safety checker may still be active")
                         
-                        # Convert to numpy for metrics
                         result_np = np.array(result)
                         gt_vis = (gt_img + 1.0) / 2.0
                         gt_vis = torch.clamp(gt_vis, 0, 1)
                         gt_np = (gt_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
                         
-                        # Resize result to match GT if needed
                         if result_np.shape[:2] != gt_np.shape[:2]:
                             result_np = cv2.resize(result_np, (gt_np.shape[1], gt_np.shape[0]))
                         
-                        # Compute metrics using MetricsCalculator (includes PSNR, SSIM, LPIPS)
                         try:
                             metrics = metrics_calc.calculate_all(result_np, gt_np)
-                            psnr_values.append(metrics['psnr'])
-                            ssim_values.append(metrics['ssim'])
+                            psnr_rgb = metrics['psnr']
+                            ssim_rgb = metrics['ssim']
+                            psnr_values.append(psnr_rgb)
+                            ssim_values.append(ssim_rgb)
                             if metrics.get('lpips') is not None:
                                 lpips_values.append(metrics['lpips'])
                         except Exception as e:
-                            # Fallback to basic metrics if LPIPS fails
                             try:
                                 from skimage.metrics import peak_signal_noise_ratio as psnr
                                 from skimage.metrics import structural_similarity as ssim
-                                psnr_val = psnr(gt_np, result_np, data_range=255.0)
-                                ssim_val = ssim(gt_np, result_np, data_range=255.0, channel_axis=2)
-                                psnr_values.append(psnr_val)
-                                ssim_values.append(ssim_val)
+                                psnr_rgb = psnr(gt_np, result_np, data_range=255.0)
+                                ssim_rgb = ssim(gt_np, result_np, data_range=255.0, channel_axis=2)
+                                psnr_values.append(psnr_rgb)
+                                ssim_values.append(ssim_rgb)
                             except ImportError:
-                                pass
+                                psnr_rgb = None
+                                ssim_rgb = None
                         
-                        # Create side-by-side comparison
+                        psnr_y = None
+                        ssim_y = None
+                        if psnr_rgb is not None:
+                            try:
+                                psnr_y, ssim_y = compute_y_channel_metrics(result_np, gt_np)
+                            except Exception as e:
+                                logger.warning(f"Failed to compute Y-channel metrics for sample {idx}: {e}")
+                        
+                        if sigma is not None:
+                            sigma_bucket = int(round(sigma))
+                            if sigma_bucket not in sigma_buckets:
+                                sigma_buckets[sigma_bucket] = {"psnr": [], "ssim": [], "psnr_y": [], "ssim_y": []}
+                            if psnr_rgb is not None:
+                                sigma_buckets[sigma_bucket]["psnr"].append(psnr_rgb)
+                                sigma_buckets[sigma_bucket]["ssim"].append(ssim_rgb)
+                            if psnr_y is not None:
+                                sigma_buckets[sigma_bucket]["psnr_y"].append(psnr_y)
+                                sigma_buckets[sigma_bucket]["ssim_y"].append(ssim_y)
+                        
                         input_np = (input_vis.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-                        # Resize input to match if needed
                         if input_np.shape[:2] != gt_np.shape[:2]:
                             input_np = cv2.resize(input_np, (gt_np.shape[1], gt_np.shape[0]))
                         
-                        # Create comparison image: [Input | Model Output | Ground Truth]
                         comparison = np.hstack([input_np, result_np, gt_np])
                         comparison_pil = Image.fromarray(comparison)
                         
-                        # Save comparison (overwrite if exists)
                         save_path = val_output_dir / f"epoch_{epoch+1}_sample_{i+1}_idx{idx}.png"
                         comparison_pil.save(save_path)
             finally:
                 pipeline.unet.train()
                 torch.cuda.empty_cache()
             
-            # Log metrics
+            # Log metrics and return
             if psnr_values:
                 avg_psnr = np.mean(psnr_values)
                 avg_ssim = np.mean(ssim_values)
                 metric_str = f"Validation (epoch {epoch+1}): PSNR={avg_psnr:.2f} dB, SSIM={avg_ssim:.4f}"
                 
+                result = {"psnr": avg_psnr, "ssim": avg_ssim}
+                
                 if lpips_values:
                     avg_lpips = np.mean(lpips_values)
                     metric_str += f", LPIPS={avg_lpips:.4f}"
-                
-                logger.info(metric_str)
-                print(metric_str)
-                sys.stdout.flush()
-        
-        # Training loop
-        logger.info(f"\nStarting training for {num_epochs} epochs...")
-        logger.info(f"Batch size: {batch_size}, Gradient accumulation: {gradient_accumulation_steps}")
-        logger.info(f"Total steps: {num_train_steps}")
-        logger.info(f"Learning rate: {learning_rate}")
-        logger.info(f"Image size: {image_size}")
-        print(f"\nStarting training for {num_epochs} epochs...")
-        print(f"Batch size: {batch_size}, Gradient accumulation: {gradient_accumulation_steps}")
-        print(f"Total steps: {num_train_steps}")
-        
-        global_step = 0
-        
-        for epoch in range(num_epochs):
-            unet.train()
-            train_loss = 0.0
-            num_batches = 0
+                result["lpips"] = avg_lpips
             
-            progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
-            
-            for batch in progress_bar:
-                with accelerator.accumulate(unet):
-                    # Get images
-                    input_images = batch["input"].to(accelerator.device)
-                    gt_images = batch["gt"].to(accelerator.device)
-                    
-                    # Encode images with VAE (always on GPU)
-                    with torch.no_grad():
-                        # Ensure input images match VAE dtype
-                        input_images_encoded = input_images.to(vae.dtype)
-                        gt_images_encoded = gt_images.to(vae.dtype)
-                        input_latents = vae.encode(input_images_encoded).latent_dist.sample()
-                        gt_latents = vae.encode(gt_images_encoded).latent_dist.sample()
-                        input_latents = input_latents * vae.config.scaling_factor
-                        gt_latents = gt_latents * vae.config.scaling_factor
-                    
-                    # For denoising: train model to predict noise that needs to be removed
-                    # Standard diffusion training: add noise to clean GT, predict that noise
-                    # But condition on the noisy input to learn denoising transformation
-                    
-                    # Sample timesteps - use full range for better learning
-                    timesteps = torch.randint(
-                        0, noise_scheduler.config.num_train_timesteps,
-                        (gt_latents.shape[0],),
-                        device=gt_latents.device
-                    ).long()
-                    
-                    # Add noise to the CLEAN ground truth (standard diffusion training)
-                    # This simulates the denoising process: we'll learn to remove this noise
-                    noise = torch.randn_like(gt_latents)
-                    noisy_gt_latents = noise_scheduler.add_noise(gt_latents, noise, timesteps)
-                    
-                    # Blend noisy input with noisy GT for conditioning
-                    alpha = timesteps.float() / noise_scheduler.config.num_train_timesteps
-                    alpha = alpha.view(-1, 1, 1, 1)
-                    model_input = (1 - alpha) * input_latents + alpha * noisy_gt_latents
-                    
-                    prompt = "clean high quality photo, no noise, sharp details"
-                    added_cond_kwargs = None
-                    with torch.no_grad():
-                        if is_sdxl and text_encoder_2 is not None:
-                            # SD-XL: encode with both text encoders
-                            text_inputs = tokenizer(
-                                prompt,
-                                padding="max_length",
-                                max_length=tokenizer.model_max_length,
-                                truncation=True,
-                                return_tensors="pt"
-                            )
-                            text_inputs_2 = tokenizer_2(
-                                prompt,
-                                padding="max_length",
-                                max_length=tokenizer_2.model_max_length,
-                                truncation=True,
-                                return_tensors="pt"
-                            )
-                            # Extract sequence embeddings from both encoders
-                            encoder_output_1 = text_encoder(text_inputs.input_ids.to(accelerator.device))
-                            encoder_output_2 = text_encoder_2(text_inputs_2.input_ids.to(accelerator.device))
-                            
-                            if hasattr(encoder_output_1, 'last_hidden_state'):
-                                prompt_embeds = encoder_output_1.last_hidden_state  # (batch, seq_len, 768)
-                            elif isinstance(encoder_output_1, tuple):
-                                prompt_embeds = encoder_output_1[0]  # (batch, seq_len, 768)
-                            else:
-                                prompt_embeds = encoder_output_1  # (batch, seq_len, 768)
-                            
-                            if hasattr(encoder_output_2, 'last_hidden_state'):
-                                prompt_embeds_2 = encoder_output_2.last_hidden_state  # (batch, seq_len, 1280)
-                                # Get pooled embeddings for added_cond_kwargs
-                                if hasattr(encoder_output_2, 'pooler_output') and encoder_output_2.pooler_output is not None:
-                                    pooled_prompt_embeds = encoder_output_2.pooler_output  # (batch, 1280)
-                                else:
-                                    pooled_prompt_embeds = None
-                            elif isinstance(encoder_output_2, tuple):
-                                prompt_embeds_2 = encoder_output_2[0]  # (batch, seq_len, 1280)
-                                pooled_prompt_embeds = encoder_output_2[1] if len(encoder_output_2) > 1 else None
-                            else:
-                                prompt_embeds_2 = encoder_output_2  # (batch, seq_len, 1280)
-                                pooled_prompt_embeds = None
-                            
-                            # Ensure both have the same sequence length
-                            seq_len_1 = prompt_embeds.shape[1]
-                            seq_len_2 = prompt_embeds_2.shape[1]
-                            if seq_len_1 != seq_len_2:
-                                min_len = min(seq_len_1, seq_len_2)
-                                if seq_len_1 > min_len:
-                                    prompt_embeds = prompt_embeds[:, :min_len, :]
-                                if seq_len_2 > min_len:
-                                    prompt_embeds_2 = prompt_embeds_2[:, :min_len, :]
-                            
-                            text_embeddings = torch.cat([prompt_embeds, prompt_embeds_2], dim=-1)
-                            
-                            # Prepare added_cond_kwargs for SD-XL UNet
-                            if pooled_prompt_embeds is None:
-                                pooled_prompt_embeds = prompt_embeds_2.mean(dim=1)
-                            
-                            if pooled_prompt_embeds is None or pooled_prompt_embeds.numel() == 0:
-                                batch_size = text_embeddings.shape[0]
-                                pooled_prompt_embeds = torch.zeros(batch_size, 1280, dtype=text_embeddings.dtype, device=text_embeddings.device)
-                            
-                            batch_size = text_embeddings.shape[0]
-                            time_ids = torch.tensor(
-                                [[image_size, image_size, 0, 0, image_size, image_size]],
-                                dtype=text_embeddings.dtype,
-                                device=text_embeddings.device
-                            ).repeat(batch_size, 1)
-                            
-                            if pooled_prompt_embeds.shape[0] == 1 and batch_size > 1:
-                                pooled_prompt_embeds = pooled_prompt_embeds.repeat(batch_size, 1)
-                            
-                            added_cond_kwargs = {
-                                "text_embeds": pooled_prompt_embeds.to(unet.dtype),
-                                "time_ids": time_ids.to(unet.dtype)
+            if sigma_buckets:
+                    metric_str += "\n  Per-sigma metrics:"
+                    for sigma_val in sorted(sigma_buckets.keys()):
+                        bucket = sigma_buckets[sigma_val]
+                        if bucket["psnr"]:
+                            avg_psnr_sigma = np.mean(bucket["psnr"])
+                            avg_ssim_sigma = np.mean(bucket["ssim"])
+                            metric_str += f"\n    σ={sigma_val}: PSNR={avg_psnr_sigma:.2f} dB, SSIM={avg_ssim_sigma:.4f}"
+                            if bucket["psnr_y"]:
+                                avg_psnr_y_sigma = np.mean(bucket["psnr_y"])
+                                avg_ssim_y_sigma = np.mean(bucket["ssim_y"])
+                                metric_str += f" | Y-channel: PSNR={avg_psnr_y_sigma:.2f} dB, SSIM={avg_ssim_y_sigma:.4f}"
+                            result[f"sigma_{sigma_val}"] = {
+                                "psnr": avg_psnr_sigma,
+                                "ssim": avg_ssim_sigma,
+                                "psnr_y": np.mean(bucket["psnr_y"]) if bucket["psnr_y"] else None,
+                                "ssim_y": np.mean(bucket["ssim_y"]) if bucket["ssim_y"] else None
                             }
-                        else:
-                            text_inputs = tokenizer(
-                                prompt,
-                                padding="max_length",
-                                max_length=tokenizer.model_max_length,
-                                truncation=True,
-                                return_tensors="pt"
-                            )
-                            encoder_output = text_encoder(text_inputs.input_ids.to(accelerator.device))
-                            if hasattr(encoder_output, 'last_hidden_state'):
-                                text_embeddings = encoder_output.last_hidden_state
-                            elif isinstance(encoder_output, tuple):
-                                text_embeddings = encoder_output[0]
-                            else:
-                                text_embeddings = encoder_output
-                    
-                    # Expand to match batch size if needed
-                    batch_size = model_input.shape[0]
-                    if text_embeddings.shape[0] == 1 and batch_size > 1:
-                        text_embeddings = text_embeddings.repeat(batch_size, 1, 1)
-                    
-                    # Predict the noise that was added to GT (conditioned on noisy input)
-                    # Model learns: given noisy input, predict noise to remove from noisy GT
-                    model_input = model_input.to(unet.dtype)
-                    
-                    # SD-XL UNet requires added_cond_kwargs, SD v1.5 does not
-                    if is_sdxl and added_cond_kwargs is not None:
-                        noise_pred = unet(
-                            model_input,
-                            timesteps,
-                            encoder_hidden_states=text_embeddings.to(unet.dtype),
-                            added_cond_kwargs=added_cond_kwargs
-                        ).sample
-                    else:
-                        noise_pred = unet(
-                            model_input,
-                            timesteps,
-                            encoder_hidden_states=text_embeddings.to(unet.dtype)
-                        ).sample
-                    
-                    noise = noise.to(noise_pred.dtype)
-                    loss = torch.nn.functional.mse_loss(noise_pred, noise)
-                    
-                    if torch.isnan(loss) or torch.isinf(loss):
-                        print(f"Warning: Invalid loss detected (NaN/Inf) at step {global_step}, skipping...")
-                        optimizer.zero_grad()
-                        continue
-                    
-                    # Backward pass
-                    accelerator.backward(loss)
-                    
-                    if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(unet.parameters(), max_norm=1.0)
-                    
-                    optimizer.step()
-                    lr_scheduler.step()
-                    optimizer.zero_grad()
-                    
-                    if global_step % 20 == 0:
-                        torch.cuda.empty_cache()
+            
+            y_psnr_values = []
+            y_ssim_values = []
+            for bucket in sigma_buckets.values():
+                if bucket["psnr_y"]:
+                    y_psnr_values.extend(bucket["psnr_y"])
+                    y_ssim_values.extend(bucket["ssim_y"])
+            
+            if y_psnr_values:
+                avg_psnr_y = np.mean(y_psnr_values)
+                avg_ssim_y = np.mean(y_ssim_values)
+                metric_str += f"\n  Y-channel (overall): PSNR={avg_psnr_y:.2f} dB, SSIM={avg_ssim_y:.4f}"
+                result["psnr_y"] = avg_psnr_y
+                result["ssim_y"] = avg_ssim_y
+            
+            logger.info(metric_str)
+            print(metric_str)
+            sys.stdout.flush()
+            return result
+        return None
+    
+    logger.info(f"\nStarting training for {num_epochs} epochs...")
+    logger.info(f"Batch size: {batch_size}, Gradient accumulation: {gradient_accumulation_steps}")
+    logger.info(f"Total steps: {num_train_steps}")
+    logger.info(f"Learning rate: {learning_rate}")
+    logger.info(f"Image size: {image_size}")
+    print(f"\nStarting training for {num_epochs} epochs...")
+    print(f"Batch size: {batch_size}, Gradient accumulation: {gradient_accumulation_steps}")
+    print(f"Total steps: {num_train_steps}")
+    
+    global_step = 0
+    
+    for epoch in range(num_epochs):
+        unet.train()
+        train_loss = 0.0
+        num_batches = 0
+        
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        
+        for batch in progress_bar:
+            with accelerator.accumulate(unet):
+                input_images = batch["input"].to(accelerator.device)
+                gt_images = batch["gt"].to(accelerator.device)
                 
-                train_loss += loss.item()
+                with torch.no_grad():
+                    input_images_encoded = input_images.to(vae.dtype)
+                    gt_images_encoded = gt_images.to(vae.dtype)
+                    input_latents = vae.encode(input_images_encoded).latent_dist.sample()
+                    gt_latents = vae.encode(gt_images_encoded).latent_dist.sample()
+                    input_latents = input_latents * vae.config.scaling_factor
+                    gt_latents = gt_latents * vae.config.scaling_factor
+                
+                timesteps = torch.randint(
+                    0, noise_scheduler.config.num_train_timesteps,
+                    (gt_latents.shape[0],),
+                    device=gt_latents.device
+                ).long()
+                
+                noise = torch.randn_like(gt_latents)
+                noisy_gt_latents = noise_scheduler.add_noise(gt_latents, noise, timesteps)
+                
+                # Uses "soft conditioning" via latent blending
+                # Inference parameters: strength=0.3, guidance_scale=5.0
+                alpha = timesteps.float() / noise_scheduler.config.num_train_timesteps
+                alpha = alpha.view(-1, 1, 1, 1)
+                model_input = (1 - alpha) * input_latents + alpha * noisy_gt_latents
+                
+                prompt = "clean high quality photo, no noise, sharp details"
+                added_cond_kwargs = None
+                with torch.no_grad():
+                    if is_sdxl and text_encoder_2 is not None:
+                        text_inputs = tokenizer(
+                            prompt,
+                            padding="max_length",
+                            max_length=tokenizer.model_max_length,
+                            truncation=True,
+                            return_tensors="pt"
+                        )
+                        text_inputs_2 = tokenizer_2(
+                            prompt,
+                            padding="max_length",
+                            max_length=tokenizer_2.model_max_length,
+                            truncation=True,
+                            return_tensors="pt"
+                        )
+                        encoder_output_1 = text_encoder(text_inputs.input_ids.to(accelerator.device))
+                        encoder_output_2 = text_encoder_2(text_inputs_2.input_ids.to(accelerator.device))
+                        
+                        if hasattr(encoder_output_1, 'last_hidden_state'):
+                            prompt_embeds = encoder_output_1.last_hidden_state
+                        elif isinstance(encoder_output_1, tuple):
+                            prompt_embeds = encoder_output_1[0]
+                        else:
+                            prompt_embeds = encoder_output_1
+                        
+                        if hasattr(encoder_output_2, 'last_hidden_state'):
+                            prompt_embeds_2 = encoder_output_2.last_hidden_state
+                            if hasattr(encoder_output_2, 'pooler_output') and encoder_output_2.pooler_output is not None:
+                                pooled_prompt_embeds = encoder_output_2.pooler_output
+                            else:
+                                pooled_prompt_embeds = None
+                        elif isinstance(encoder_output_2, tuple):
+                            prompt_embeds_2 = encoder_output_2[0]
+                            pooled_prompt_embeds = encoder_output_2[1] if len(encoder_output_2) > 1 else None
+                        else:
+                            prompt_embeds_2 = encoder_output_2
+                            pooled_prompt_embeds = None
+                        
+                        seq_len_1 = prompt_embeds.shape[1]
+                        seq_len_2 = prompt_embeds_2.shape[1]
+                        if seq_len_1 != seq_len_2:
+                            min_len = min(seq_len_1, seq_len_2)
+                            if seq_len_1 > min_len:
+                                prompt_embeds = prompt_embeds[:, :min_len, :]
+                            if seq_len_2 > min_len:
+                                prompt_embeds_2 = prompt_embeds_2[:, :min_len, :]
+                        
+                        text_embeddings = torch.cat([prompt_embeds, prompt_embeds_2], dim=-1)
+                        
+                        if pooled_prompt_embeds is None:
+                            pooled_prompt_embeds = prompt_embeds_2.mean(dim=1)
+                        
+                        if pooled_prompt_embeds is None or pooled_prompt_embeds.numel() == 0:
+                            batch_size = text_embeddings.shape[0]
+                            pooled_prompt_embeds = torch.zeros(batch_size, 1280, dtype=text_embeddings.dtype, device=text_embeddings.device)
+                        
+                        batch_size = text_embeddings.shape[0]
+                        time_ids = torch.tensor(
+                            [[image_size, image_size, 0, 0, image_size, image_size]],
+                            dtype=text_embeddings.dtype,
+                            device=text_embeddings.device
+                        ).repeat(batch_size, 1)
+                        
+                        if pooled_prompt_embeds.shape[0] == 1 and batch_size > 1:
+                            pooled_prompt_embeds = pooled_prompt_embeds.repeat(batch_size, 1)
+                        
+                        added_cond_kwargs = {
+                            "text_embeds": pooled_prompt_embeds.to(unet.dtype),
+                            "time_ids": time_ids.to(unet.dtype)
+                        }
+                    else:
+                        text_inputs = tokenizer(
+                            prompt,
+                            padding="max_length",
+                            max_length=tokenizer.model_max_length,
+                            truncation=True,
+                            return_tensors="pt"
+                        )
+                        encoder_output = text_encoder(text_inputs.input_ids.to(accelerator.device))
+                        if hasattr(encoder_output, 'last_hidden_state'):
+                            text_embeddings = encoder_output.last_hidden_state
+                        elif isinstance(encoder_output, tuple):
+                            text_embeddings = encoder_output[0]
+                        else:
+                            text_embeddings = encoder_output
+                
+                batch_size = model_input.shape[0]
+                if text_embeddings.shape[0] == 1 and batch_size > 1:
+                    text_embeddings = text_embeddings.repeat(batch_size, 1, 1)
+                
+                model_input = model_input.to(unet.dtype)
+                
+                if is_sdxl and added_cond_kwargs is not None:
+                    noise_pred = unet(
+                        model_input,
+                        timesteps,
+                        encoder_hidden_states=text_embeddings.to(unet.dtype),
+                        added_cond_kwargs=added_cond_kwargs
+                    ).sample
+                else:
+                    noise_pred = unet(
+                        model_input,
+                        timesteps,
+                        encoder_hidden_states=text_embeddings.to(unet.dtype)
+                    ).sample
+                
+                noise = noise.to(noise_pred.dtype)
+                noise_pred_loss = torch.nn.functional.mse_loss(noise_pred, noise)
+                
+                img_loss = 0.0
+                if lambda_img > 0.0:
+                    alpha_cumprod_t = noise_scheduler.alphas_cumprod[timesteps]
+                    alpha_cumprod_t = alpha_cumprod_t.view(-1, 1, 1, 1).to(noisy_gt_latents.device)
+                    sqrt_alpha_cumprod = torch.sqrt(alpha_cumprod_t)
+                    sqrt_one_minus_alpha_cumprod = torch.sqrt(1.0 - alpha_cumprod_t)
+                    
+                    pred_clean_latents = (noisy_gt_latents - sqrt_one_minus_alpha_cumprod * noise_pred) / sqrt_alpha_cumprod
+                    
+                    with torch.no_grad():
+                        pred_clean_latents_scaled = pred_clean_latents / vae.config.scaling_factor
+                        pred_img = vae.decode(pred_clean_latents_scaled.to(vae.dtype)).sample
+                        pred_img = (pred_img + 1.0) / 2.0
+                    
+                    gt_images_normalized = (gt_images + 1.0) / 2.0
+                    img_loss = torch.mean(torch.abs(pred_img - gt_images_normalized))
+                
+                loss = noise_pred_loss + lambda_img * img_loss
+                
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"Warning: Invalid loss detected (NaN/Inf) at step {global_step}, skipping...")
+                    optimizer.zero_grad()
+                    continue
+                
+                accelerator.backward(loss)
+                
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(unet.parameters(), max_norm=1.0)
+                
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+                
+                if global_step % 20 == 0:
+                    torch.cuda.empty_cache()
+                
+                train_loss += loss.detach().item()
                 global_step += 1
                 num_batches += 1
                 
                 # Show running average loss in progress bar
-                avg_loss_so_far = train_loss / num_batches
-                progress_bar.set_postfix({"loss": f"{avg_loss_so_far:.4f}", "batch_loss": f"{loss.item():.4f}"})
+                avg_loss_so_far = train_loss / max(1, num_batches)
+                progress_bar.set_postfix({"loss": f"{avg_loss_so_far:.4f}", "batch_loss": f"{loss.detach().item():.4f}"})
             
             # Save checkpoint (if save_steps > 0, save every N steps; if -1, skip)
             if save_steps > 0 and global_step % save_steps == 0:
@@ -701,7 +765,6 @@ def train_denoising(
                     checkpoint_dir = output_dir / f"checkpoint-{global_step}"
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Save UNet
                     unet_to_save = accelerator.unwrap_model(unet)
                     unet_to_save.eval()
                     
@@ -739,7 +802,7 @@ def train_denoising(
                             handler.flush()
                     print(f"\nSaved checkpoint at step {global_step}")
         
-            avg_loss = train_loss / len(train_loader)
+            avg_loss = train_loss / max(1, num_batches)
             logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}")
             # Force flush to ensure log is written immediately
             for handler in logger.handlers:
@@ -752,15 +815,35 @@ def train_denoising(
             
             # Run validation every epoch for consistent monitoring across all tasks
             if val_dataset is not None and accelerator.is_main_process:
-                run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2, is_sdxl_model=is_sdxl)
+                val_stats = run_validation(epoch, val_dataset, pipeline, unet, output_dir, num_samples=2, is_sdxl_model=is_sdxl)
+                if val_stats is not None:
+                    psnr = val_stats["psnr"]
+                    # Check if this is the best model so far
+                    if psnr > best_val_metric:
+                        best_val_metric = psnr
+                        accelerator.wait_for_everyone()
+                        if accelerator.is_main_process:
+                            unet_to_save = accelerator.unwrap_model(unet)
+                            pipeline.unet = unet_to_save
+                            save_dir = best_checkpoint_dir
+                            pipeline.save_pretrained(save_dir)
+                            logger.info(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
+                            print(f"New best model (PSNR={psnr:.2f} dB) saved to: {save_dir}")
+                            sys.stdout.flush()
+                
+                    # Log metrics to CSV
+                    with open(metrics_file, "a") as f:
+                        lpips_val = val_stats.get('lpips', float('nan'))
+                        psnr_y_val = val_stats.get('psnr_y', float('nan'))
+                        ssim_y_val = val_stats.get('ssim_y', float('nan'))
+                        f.write(f"{epoch+1},{val_stats['psnr']:.4f},{val_stats['ssim']:.4f},"
+                                f"{lpips_val:.4f},{psnr_y_val:.4f},{ssim_y_val:.4f},{avg_loss:.6f}\n")
             
-            # Save checkpoint at end of epoch (if save_steps == 0)
             if save_steps == 0:
                 if accelerator.is_main_process:
                     checkpoint_dir = output_dir / f"checkpoint-epoch-{epoch+1}"
                     checkpoint_dir.mkdir(parents=True, exist_ok=True)
                     
-                    # Save UNet
                     unet_to_save = accelerator.unwrap_model(unet)
                     unet_to_save.eval()
                     
@@ -797,8 +880,8 @@ def train_denoising(
                         if isinstance(handler, logging.FileHandler):
                             handler.flush()
                     print(f"\nSaved checkpoint at end of epoch {epoch+1}")
-        
-        # Save final model (OUTSIDE the training loop - only once after all epochs)
+    
+    if accelerator.is_main_process:
         print("\nSaving final model...")
         logger.info("Saving final model...")
         final_dir = output_dir / "final"
@@ -808,17 +891,14 @@ def train_denoising(
         unet_to_save = accelerator.unwrap_model(unet)
         unet_to_save.eval()
         
-        # Disable gradient checkpointing temporarily for saving (if enabled)
         was_checkpointing = False
         if hasattr(unet_to_save, "gradient_checkpointing") and unet_to_save.gradient_checkpointing:
             was_checkpointing = True
             unet_to_save.disable_gradient_checkpointing()
         
-        # Save UNet with safetensors format (keep on GPU, no need to move to CPU)
         unet_dir = final_dir / "unet"
         unet_dir.mkdir(parents=True, exist_ok=True)
         
-        # First, save config.json using save_pretrained (this always works)
         try:
             unet_to_save.save_pretrained(
                 str(unet_dir),
@@ -828,22 +908,17 @@ def train_denoising(
             logger.info(f"UNet config saved to {unet_dir}")
         except Exception as e:
             logger.warning(f"Failed to save UNet config via save_pretrained: {e}")
-            # Continue anyway - we'll save config manually if needed
         
-        # Always save weights directly using safetensors (more reliable)
         print("  Saving UNet weights directly...")
         try:
             from safetensors.torch import save_file
             import json
             
-            # Get state dict
             state_dict = unet_to_save.state_dict()
             weight_path = unet_dir / "diffusion_pytorch_model.safetensors"
             
-            # Save weights
             save_file(state_dict, str(weight_path))
             
-            # Verify file was created and has size > 0
             if weight_path.exists() and weight_path.stat().st_size > 0:
                 file_size_mb = weight_path.stat().st_size / (1024 * 1024)
                 print(f"  UNet weights saved successfully: {weight_path.name} ({file_size_mb:.2f} MB)")
@@ -851,7 +926,6 @@ def train_denoising(
             else:
                 raise RuntimeError(f"Weight file {weight_path} was not created or is empty")
             
-            # Ensure config.json exists (save it if save_pretrained didn't work)
             config_path = unet_dir / "config.json"
             if not config_path.exists():
                 logger.warning("config.json missing, saving it now...")
@@ -868,19 +942,15 @@ def train_denoising(
             print(f"  ERROR: Failed to save UNet weights: {e}")
             raise
         finally:
-            # Re-enable gradient checkpointing if it was enabled
             if was_checkpointing and hasattr(unet_to_save, "enable_gradient_checkpointing"):
                 unet_to_save.enable_gradient_checkpointing()
         
-        # Save full pipeline (all components: UNet, VAE, text_encoder, tokenizer, scheduler)
         print("  Saving full pipeline (this may take a few minutes)...")
         pipeline.unet = unet_to_save
-        # Ensure all components are in eval mode before saving
         pipeline.vae.eval()
         pipeline.text_encoder.eval()
         if hasattr(pipeline, 'text_encoder_2'):
             pipeline.text_encoder_2.eval()
-        # Save entire pipeline with all components
         pipeline.save_pretrained(
             final_dir,
             safe_serialization=True,
@@ -895,7 +965,6 @@ def train_denoising(
         logger.info(f"Training completed at: {training_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"Total training duration: {training_duration}")
         logger.info(f"Average time per epoch: {training_duration / num_epochs}")
-        # Final flush
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler):
                 handler.flush()
@@ -923,10 +992,12 @@ if __name__ == "__main__":
                        help="Batch size (use 1 if GPU memory is limited)")
     parser.add_argument("--learning_rate", type=float, default=5e-6,
                        help="Learning rate (default: 5e-6 for fine-tuning)")
-    parser.add_argument("--base_model", type=str, default="runwayml/stable-diffusion-v1-5",
+    parser.add_argument("--lambda_img", type=float, default=0.05,
+                       help="Weight for image-space L1 loss (0.0 to disable, default: 0.05)")
+    parser.add_argument("--base_model", type=str, default="sd-legacy/stable-diffusion-v1-5",
                        help="Base model to fine-tune from. Options: "
-                            "'runwayml/stable-diffusion-v1-5' (default, recommended - good quality, fast training, publicly accessible), "
-                            "'stabilityai/stable-diffusion-xl-base-1.0'")
+                            "'sd-legacy/stable-diffusion-v1-5' (default, recommended - good quality, fast training, publicly accessible), "
+                            "'stabilityai/stable-diffusion-xl-base-1.0' (better quality, 3.5B parameters)")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=8,
                        help="Gradient accumulation steps (increase to 8+ for low memory)")
     parser.add_argument("--save_steps", type=int, default=500,
@@ -957,6 +1028,7 @@ if __name__ == "__main__":
         args.image_size,
         args.max_train_samples,
         args.max_val_samples,
-        args.base_model
+        args.base_model,
+        args.lambda_img
     )
 
