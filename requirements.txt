@@ -15,6 +15,7 @@ scipy>=1.10
 gradio>=4.0
 huggingface_hub>=0.20
 datasets>=2.14
+requests>=2.31
 
 # Optional: For Real-ESRGAN super-resolution (install separately if needed)
 # realesrgan>=0.2.0
