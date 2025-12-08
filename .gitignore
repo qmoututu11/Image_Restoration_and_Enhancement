@@ -1,6 +1,33 @@
 # Data and artifacts
-data/
-outputs/
+# Allow data/ directory to be tracked (comment out to ignore)
+# data/
+
+# Outputs: ignore model weights but allow metrics, logs, and configs
+# Ignore all outputs by default
+outputs/**
+# Un-ignore the models directory structure
+!outputs/models/
+!outputs/models/**/
+# Allow metrics and training logs
+!outputs/models/**/*.csv
+!outputs/models/**/*.txt
+!outputs/models/**/*.log
+!outputs/models/**/metrics_*.csv
+!outputs/models/**/training_log*.txt
+!outputs/models/**/training_log*.json
+# Allow config files (needed for model loading)
+!outputs/models/**/model_index.json
+!outputs/models/**/*config.json
+!outputs/models/**/tokenizer_config.json
+!outputs/models/**/special_tokens_map.json
+!outputs/models/**/vocab.json
+!outputs/models/**/merges.txt
+# Re-ignore model weight files (too large for git)
+outputs/models/**/*.safetensors
+outputs/models/**/*.bin
+outputs/models/**/*.pt
+outputs/models/**/*.pth
+
 checkpoints/
 logs/
 

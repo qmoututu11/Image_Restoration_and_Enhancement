@@ -1,0 +1,217 @@
+2025-12-06 05:19:05,565 - ============================================================
+2025-12-06 05:19:05,567 - Fine-tuning Stable Diffusion for Colorization
+2025-12-06 05:19:05,567 - ============================================================
+2025-12-06 05:19:05,568 - Training started at: 2025-12-06 05:19:05
+2025-12-06 05:19:05,568 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization/training.log
+2025-12-06 05:19:05,568 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization
+2025-12-06 05:19:05,568 - Base model: stabilityai/stable-diffusion-v1-5
+2025-12-06 05:19:05,568 - Image size: 256
+2025-12-06 05:19:05,568 - Max train samples: all
+2025-12-06 05:19:05,569 - Max val samples: all
+2025-12-06 05:19:05,569 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 05:19:05,569 - GPU Memory: 39.56 GB
+2025-12-06 05:19:05,594 - Hugging Face token detected
+2025-12-06 05:24:55,801 - ============================================================
+2025-12-06 05:24:55,802 - Fine-tuning Stable Diffusion for Colorization
+2025-12-06 05:24:55,802 - ============================================================
+2025-12-06 05:24:55,802 - Training started at: 2025-12-06 05:24:55
+2025-12-06 05:24:55,802 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization/training.log
+2025-12-06 05:24:55,802 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization
+2025-12-06 05:24:55,802 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 05:24:55,802 - Image size: 256
+2025-12-06 05:24:55,802 - Max train samples: all
+2025-12-06 05:24:55,802 - Max val samples: all
+2025-12-06 05:24:55,802 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 05:24:55,803 - GPU Memory: 39.56 GB
+2025-12-06 05:24:55,827 - Hugging Face token detected
+2025-12-06 05:24:59,322 - Training dataset size: 4000 samples
+2025-12-06 05:24:59,322 - Validation dataset size: 200 samples
+2025-12-06 05:25:00,759 - DataLoader batches per epoch: 4000
+2025-12-06 05:25:00,761 - UNet parameters: 859,520,964 trainable
+2025-12-06 05:25:00,761 - UNet input channels: 4
+2025-12-06 05:25:00,761 - VAE scaling factor: 0.18215
+2025-12-06 06:22:11,034 - ============================================================
+2025-12-06 06:22:11,035 - Fine-tuning Stable Diffusion for Colorization
+2025-12-06 06:22:11,036 - ============================================================
+2025-12-06 06:22:11,037 - Training started at: 2025-12-06 06:22:11
+2025-12-06 06:22:11,037 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization/training.log
+2025-12-06 06:22:11,037 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization
+2025-12-06 06:22:11,037 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 06:22:11,037 - Image size: 256
+2025-12-06 06:22:11,037 - Max train samples: all
+2025-12-06 06:22:11,037 - Max val samples: all
+2025-12-06 06:22:11,038 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 06:22:11,038 - GPU Memory: 39.56 GB
+2025-12-06 06:22:11,064 - Hugging Face token detected
+2025-12-06 06:22:14,945 - Training dataset size: 4000 samples
+2025-12-06 06:22:14,946 - Validation dataset size: 200 samples
+2025-12-06 06:22:16,391 - DataLoader batches per epoch: 4000
+2025-12-06 06:22:16,393 - UNet parameters: 859,520,964 trainable
+2025-12-06 06:22:16,394 - UNet input channels: 4
+2025-12-06 06:22:16,394 - VAE scaling factor: 0.18215
+2025-12-06 06:22:16,395 - 
+Starting training for 10 epochs...
+2025-12-06 06:22:16,396 - Batch size: 1, Gradient accumulation: 4
+2025-12-06 06:22:16,396 - Total steps: 10000
+2025-12-06 06:22:16,396 - Learning rate: 1e-05
+2025-12-06 06:22:16,396 - Image size: 256
+2025-12-06 06:22:16,396 - Pre-computing text embeddings...
+2025-12-06 08:55:31,732 - ============================================================
+2025-12-06 08:55:31,892 - Fine-tuning Stable Diffusion for Colorization
+2025-12-06 08:55:31,892 - ============================================================
+2025-12-06 08:55:31,892 - Training started at: 2025-12-06 08:55:31
+2025-12-06 08:55:31,893 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization/training.log
+2025-12-06 08:55:31,893 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization
+2025-12-06 08:55:31,893 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 08:55:31,893 - Image size: 256
+2025-12-06 08:55:31,893 - Max train samples: all
+2025-12-06 08:55:31,893 - Max val samples: all
+2025-12-06 08:55:31,893 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 08:55:31,893 - GPU Memory: 39.56 GB
+2025-12-06 08:55:31,919 - Hugging Face token detected
+2025-12-06 08:55:37,166 - Training dataset size: 4000 samples
+2025-12-06 08:55:37,166 - Validation dataset size: 200 samples
+2025-12-06 08:55:39,554 - DataLoader batches per epoch: 2000
+2025-12-06 08:55:39,557 - UNet parameters: 859,520,964 trainable
+2025-12-06 08:55:39,557 - UNet input channels: 4
+2025-12-06 08:55:39,557 - VAE scaling factor: 0.18215
+2025-12-06 08:55:39,559 - 
+Starting training for 10 epochs...
+2025-12-06 08:55:39,559 - Batch size: 2, Gradient accumulation: 4
+2025-12-06 08:55:39,559 - Total steps: 5000
+2025-12-06 08:55:39,559 - Learning rate: 1e-05
+2025-12-06 08:55:39,559 - Image size: 256
+2025-12-06 08:55:39,559 - Pre-computing text embeddings...
+2025-12-06 09:02:58,608 - Saved checkpoint at step 500
+2025-12-06 09:09:29,979 - Saved checkpoint at step 1000
+2025-12-06 09:16:09,209 - Saved checkpoint at step 1500
+2025-12-06 09:22:44,611 - Saved checkpoint at step 2000
+2025-12-06 09:22:44,612 - Epoch 1/10 completed. Average loss: 0.4094, Processed 2000 batches
+2025-12-06 09:22:48,071 - Validation (epoch 1): RGB PSNR=9.10 dB, SSIM=0.0763, LPIPS=0.8317
+  Structure (L-channel): PSNR=10.35 dB, SSIM=0.0887
+  Color (ΔE): 44.39
+2025-12-06 09:23:07,948 - New best model (PSNR=9.10 dB) saved to: outputs/models/colorization/best
+2025-12-06 09:26:34,050 - Saved checkpoint at step 2500
+2025-12-06 09:29:49,844 - Saved checkpoint at step 3000
+2025-12-06 09:33:06,375 - Saved checkpoint at step 3500
+2025-12-06 09:36:24,276 - Saved checkpoint at step 4000
+2025-12-06 09:36:24,276 - Epoch 2/10 completed. Average loss: 0.3767, Processed 2000 batches
+2025-12-06 09:36:26,703 - Validation (epoch 2): RGB PSNR=9.05 dB, SSIM=0.0698, LPIPS=0.8677
+  Structure (L-channel): PSNR=10.09 dB, SSIM=0.0790
+  Color (ΔE): 44.69
+2025-12-06 17:46:45,534 - ============================================================
+2025-12-06 17:46:46,367 - Fine-tuning Stable Diffusion for Colorization
+2025-12-06 17:46:46,368 - ============================================================
+2025-12-06 17:46:46,369 - Training started at: 2025-12-06 17:46:45
+2025-12-06 17:46:46,370 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization/training.log
+2025-12-06 17:46:46,370 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/colorization
+2025-12-06 17:46:46,370 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 17:46:46,370 - Image size: 256
+2025-12-06 17:46:46,370 - Max train samples: all
+2025-12-06 17:46:46,370 - Max val samples: all
+2025-12-06 17:46:46,370 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 17:46:46,371 - GPU Memory: 39.56 GB
+2025-12-06 17:46:46,396 - Hugging Face token detected
+2025-12-06 17:47:14,680 - Training dataset size: 4000 samples
+2025-12-06 17:47:14,680 - Validation dataset size: 200 samples
+2025-12-06 17:47:35,037 - DataLoader batches per epoch: 2000
+2025-12-06 17:47:35,039 - UNet parameters: 859,520,964 trainable
+2025-12-06 17:47:35,039 - UNet input channels: 4
+2025-12-06 17:47:35,039 - VAE scaling factor: 0.18215
+2025-12-06 17:47:35,041 - 
+Starting training for 10 epochs...
+2025-12-06 17:47:35,041 - Batch size: 2, Gradient accumulation: 4
+2025-12-06 17:47:35,041 - Total steps: 5000
+2025-12-06 17:47:35,041 - Learning rate: 1e-05
+2025-12-06 17:47:35,041 - Image size: 256
+2025-12-06 17:47:35,041 - Pre-computing text embeddings...
+2025-12-06 18:05:55,943 - Saved checkpoint at step 500
+2025-12-06 18:24:06,180 - Saved checkpoint at step 1000
+2025-12-06 18:42:04,882 - Saved checkpoint at step 1500
+2025-12-06 19:00:14,998 - Saved checkpoint at step 2000
+2025-12-06 19:00:14,998 - Epoch 1/10 completed. Average loss: 0.4122, Processed 2000 batches
+2025-12-06 19:00:22,563 - Validation (epoch 1): RGB PSNR=8.87 dB, SSIM=0.0710, LPIPS=0.8465
+  Structure (L-channel): PSNR=9.99 dB, SSIM=0.0849
+  Color (ΔE): 46.34
+2025-12-06 19:03:16,078 - New best model (PSNR=8.87 dB) saved to: outputs/models/colorization/best
+2025-12-06 19:08:58,164 - Saved checkpoint at step 2500
+2025-12-06 19:14:56,209 - Saved checkpoint at step 3000
+2025-12-06 19:20:31,781 - Saved checkpoint at step 3500
+2025-12-06 19:26:16,017 - Saved checkpoint at step 4000
+2025-12-06 19:26:16,018 - Epoch 2/10 completed. Average loss: 0.3809, Processed 2000 batches
+2025-12-06 19:26:20,688 - Validation (epoch 2): RGB PSNR=8.52 dB, SSIM=0.0678, LPIPS=0.8504
+  Structure (L-channel): PSNR=9.61 dB, SSIM=0.0799
+  Color (ΔE): 47.14
+2025-12-06 19:30:45,131 - Saved checkpoint at step 4500
+2025-12-06 19:33:58,792 - Saved checkpoint at step 5000
+2025-12-06 19:37:13,197 - Saved checkpoint at step 5500
+2025-12-06 19:40:40,101 - Saved checkpoint at step 6000
+2025-12-06 19:40:40,101 - Epoch 3/10 completed. Average loss: 0.3839, Processed 2000 batches
+2025-12-06 19:40:43,222 - Validation (epoch 3): RGB PSNR=8.75 dB, SSIM=0.0731, LPIPS=0.8230
+  Structure (L-channel): PSNR=9.95 dB, SSIM=0.0888
+  Color (ΔE): 46.31
+2025-12-06 19:43:59,346 - Saved checkpoint at step 6500
+2025-12-06 19:47:48,378 - Saved checkpoint at step 7000
+2025-12-06 19:51:54,983 - Saved checkpoint at step 7500
+2025-12-06 19:56:20,516 - Saved checkpoint at step 8000
+2025-12-06 19:56:20,517 - Epoch 4/10 completed. Average loss: 0.3823, Processed 2000 batches
+2025-12-06 19:56:23,782 - Validation (epoch 4): RGB PSNR=8.16 dB, SSIM=0.0594, LPIPS=0.8638
+  Structure (L-channel): PSNR=9.24 dB, SSIM=0.0712
+  Color (ΔE): 49.20
+2025-12-06 19:59:50,211 - Saved checkpoint at step 8500
+2025-12-06 20:03:55,344 - Saved checkpoint at step 9000
+2025-12-06 20:07:48,848 - Saved checkpoint at step 9500
+2025-12-06 20:13:27,440 - Saved checkpoint at step 10000
+2025-12-06 20:13:27,441 - Epoch 5/10 completed. Average loss: 0.3825, Processed 2000 batches
+2025-12-06 20:13:29,753 - Validation (epoch 5): RGB PSNR=9.33 dB, SSIM=0.0821, LPIPS=0.8596
+  Structure (L-channel): PSNR=10.52 dB, SSIM=0.0917
+  Color (ΔE): 43.91
+2025-12-06 20:14:31,148 - New best model (PSNR=9.33 dB) saved to: outputs/models/colorization/best
+2025-12-06 20:19:17,099 - Saved checkpoint at step 10500
+2025-12-06 20:23:59,045 - Saved checkpoint at step 11000
+2025-12-06 20:28:41,119 - Saved checkpoint at step 11500
+2025-12-06 20:33:25,943 - Saved checkpoint at step 12000
+2025-12-06 20:33:25,944 - Epoch 6/10 completed. Average loss: 0.3767, Processed 2000 batches
+2025-12-06 20:33:28,229 - Validation (epoch 6): RGB PSNR=8.94 dB, SSIM=0.0634, LPIPS=0.8449
+  Structure (L-channel): PSNR=9.85 dB, SSIM=0.0715
+  Color (ΔE): 45.02
+2025-12-06 20:36:45,284 - Saved checkpoint at step 12500
+2025-12-06 20:40:26,836 - Saved checkpoint at step 13000
+2025-12-06 20:44:38,565 - Saved checkpoint at step 13500
+2025-12-06 20:50:30,710 - Saved checkpoint at step 14000
+2025-12-06 20:50:30,711 - Epoch 7/10 completed. Average loss: 0.3775, Processed 2000 batches
+2025-12-06 20:50:33,167 - Validation (epoch 7): RGB PSNR=9.15 dB, SSIM=0.0779, LPIPS=0.8349
+  Structure (L-channel): PSNR=10.21 dB, SSIM=0.0893
+  Color (ΔE): 44.02
+2025-12-06 20:53:44,217 - Saved checkpoint at step 14500
+2025-12-06 20:57:31,308 - Saved checkpoint at step 15000
+2025-12-06 21:01:26,390 - Saved checkpoint at step 15500
+2025-12-06 21:05:49,762 - Saved checkpoint at step 16000
+2025-12-06 21:05:49,763 - Epoch 8/10 completed. Average loss: 0.3738, Processed 2000 batches
+2025-12-06 21:05:53,794 - Validation (epoch 8): RGB PSNR=8.40 dB, SSIM=0.0666, LPIPS=0.8602
+  Structure (L-channel): PSNR=9.53 dB, SSIM=0.0787
+  Color (ΔE): 47.19
+2025-12-06 21:09:11,243 - Saved checkpoint at step 16500
+2025-12-06 21:12:46,580 - Saved checkpoint at step 17000
+2025-12-06 21:16:58,349 - Saved checkpoint at step 17500
+2025-12-06 21:21:37,344 - Saved checkpoint at step 18000
+2025-12-06 21:21:37,345 - Epoch 9/10 completed. Average loss: 0.3790, Processed 2000 batches
+2025-12-06 21:21:40,293 - Validation (epoch 9): RGB PSNR=8.97 dB, SSIM=0.0711, LPIPS=0.8257
+  Structure (L-channel): PSNR=9.77 dB, SSIM=0.0805
+  Color (ΔE): 43.24
+2025-12-06 21:25:04,341 - Saved checkpoint at step 18500
+2025-12-06 21:28:41,158 - Saved checkpoint at step 19000
+2025-12-06 21:32:30,471 - Saved checkpoint at step 19500
+2025-12-06 21:37:11,032 - Saved checkpoint at step 20000
+2025-12-06 21:37:11,033 - Epoch 10/10 completed. Average loss: 0.3890, Processed 2000 batches
+2025-12-06 21:37:13,436 - Validation (epoch 10): RGB PSNR=8.24 dB, SSIM=0.0668, LPIPS=0.8743
+  Structure (L-channel): PSNR=9.58 dB, SSIM=0.0847
+  Color (ΔE): 49.54
+2025-12-06 21:37:13,439 - Saving final model...
+2025-12-06 21:37:25,961 - UNet config saved to outputs/models/colorization/final/unet
+2025-12-06 21:37:37,950 - UNet weights saved: outputs/models/colorization/final/unet/diffusion_pytorch_model.safetensors (3278.89 MB)
+2025-12-06 21:37:55,413 - Training complete! Model saved to: outputs/models/colorization/final
+2025-12-06 21:37:55,413 - Final model contains: UNet, VAE, text_encoder, tokenizer, scheduler
+2025-12-06 21:37:55,414 - Training completed at: 2025-12-06 21:37:55
+2025-12-06 21:37:55,414 - Total training duration: 3:51:09.879567
+2025-12-06 21:37:55,414 - Average time per epoch: 0:23:06.987957

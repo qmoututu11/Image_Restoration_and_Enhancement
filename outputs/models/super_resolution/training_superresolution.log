@@ -1,0 +1,182 @@
+2025-12-06 05:03:41,804 - ============================================================
+2025-12-06 05:03:41,805 - Fine-tuning Stable Diffusion for Super-Resolution
+2025-12-06 05:03:41,805 - ============================================================
+2025-12-06 05:03:41,805 - Training started at: 2025-12-06 05:03:41
+2025-12-06 05:03:41,805 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution/training.log
+2025-12-06 05:03:41,806 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution
+2025-12-06 05:03:41,806 - Base model: stabilityai/stable-diffusion-v1-5
+2025-12-06 05:03:41,806 - Image size: 256
+2025-12-06 05:03:41,806 - Max train samples: all
+2025-12-06 05:03:41,806 - Max val samples: all
+2025-12-06 05:03:41,828 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 05:03:41,828 - GPU Memory: 39.56 GB
+2025-12-06 05:03:47,567 - NumExpr defaulting to 12 threads.
+2025-12-06 05:03:49,557 - Hugging Face token detected
+2025-12-06 05:18:25,387 - ============================================================
+2025-12-06 05:18:25,388 - Fine-tuning Stable Diffusion for Super-Resolution
+2025-12-06 05:18:25,389 - ============================================================
+2025-12-06 05:18:25,390 - Training started at: 2025-12-06 05:18:25
+2025-12-06 05:18:25,390 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution/training.log
+2025-12-06 05:18:25,390 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution
+2025-12-06 05:18:25,390 - Base model: stabilityai/stable-diffusion-v1-5
+2025-12-06 05:18:25,390 - Image size: 256
+2025-12-06 05:18:25,390 - Max train samples: all
+2025-12-06 05:18:25,390 - Max val samples: all
+2025-12-06 05:18:25,412 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 05:18:25,412 - GPU Memory: 39.56 GB
+2025-12-06 05:18:31,303 - NumExpr defaulting to 12 threads.
+2025-12-06 05:18:33,305 - Hugging Face token detected
+2025-12-06 05:26:16,139 - ============================================================
+2025-12-06 05:26:16,141 - Fine-tuning Stable Diffusion for Super-Resolution
+2025-12-06 05:26:16,141 - ============================================================
+2025-12-06 05:26:16,142 - Training started at: 2025-12-06 05:26:16
+2025-12-06 05:26:16,143 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution/training.log
+2025-12-06 05:26:16,143 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution
+2025-12-06 05:26:16,143 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 05:26:16,143 - Image size: 256
+2025-12-06 05:26:16,143 - Max train samples: all
+2025-12-06 05:26:16,143 - Max val samples: all
+2025-12-06 05:26:16,165 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 05:26:16,166 - GPU Memory: 39.56 GB
+2025-12-06 05:26:22,022 - NumExpr defaulting to 12 threads.
+2025-12-06 05:26:23,967 - Hugging Face token detected
+2025-12-06 05:26:26,047 - Training dataset size: 0 samples
+2025-12-06 05:26:26,047 - Validation dataset size: 0 samples
+2025-12-06 06:21:44,641 - ============================================================
+2025-12-06 06:21:44,642 - Fine-tuning Stable Diffusion for Super-Resolution
+2025-12-06 06:21:44,642 - ============================================================
+2025-12-06 06:21:44,651 - Training started at: 2025-12-06 06:21:44
+2025-12-06 06:21:44,653 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution/training.log
+2025-12-06 06:21:44,653 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution
+2025-12-06 06:21:44,653 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 06:21:44,653 - Image size: 256
+2025-12-06 06:21:44,653 - Max train samples: all
+2025-12-06 06:21:44,653 - Max val samples: all
+2025-12-06 06:21:44,676 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 06:21:44,676 - GPU Memory: 39.56 GB
+2025-12-06 06:21:50,668 - NumExpr defaulting to 12 threads.
+2025-12-06 06:21:52,642 - Hugging Face token detected
+2025-12-06 06:21:54,752 - Training dataset size: 0 samples
+2025-12-06 06:21:54,752 - Validation dataset size: 0 samples
+2025-12-06 08:54:52,617 - ============================================================
+2025-12-06 08:54:52,803 - Fine-tuning Stable Diffusion for Super-Resolution
+2025-12-06 08:54:52,804 - ============================================================
+2025-12-06 08:54:52,805 - Training started at: 2025-12-06 08:54:52
+2025-12-06 08:54:52,805 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution/training.log
+2025-12-06 08:54:52,805 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution
+2025-12-06 08:54:52,806 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 08:54:52,806 - Image size: 256
+2025-12-06 08:54:52,806 - Max train samples: all
+2025-12-06 08:54:52,806 - Max val samples: all
+2025-12-06 08:54:52,833 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 08:54:52,833 - GPU Memory: 39.56 GB
+2025-12-06 08:55:01,430 - NumExpr defaulting to 12 threads.
+2025-12-06 08:55:04,082 - Hugging Face token detected
+2025-12-06 08:55:14,836 - Training dataset size: 0 samples
+2025-12-06 08:55:14,837 - Validation dataset size: 0 samples
+2025-12-06 14:21:18,893 - ============================================================
+2025-12-06 14:21:20,664 - Fine-tuning Stable Diffusion for Super-Resolution
+2025-12-06 14:21:20,674 - ============================================================
+2025-12-06 14:21:20,676 - Training started at: 2025-12-06 14:21:18
+2025-12-06 14:21:20,676 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution/training.log
+2025-12-06 14:21:20,676 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/super_resolution
+2025-12-06 14:21:20,677 - Base model: sd-legacy/stable-diffusion-v1-5
+2025-12-06 14:21:20,677 - Image size: 256
+2025-12-06 14:21:20,677 - Max train samples: all
+2025-12-06 14:21:20,677 - Max val samples: all
+2025-12-06 14:21:20,698 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 14:21:20,699 - GPU Memory: 39.56 GB
+2025-12-06 14:21:27,612 - NumExpr defaulting to 12 threads.
+2025-12-06 14:21:32,056 - Hugging Face token detected
+2025-12-06 14:22:10,378 - Training dataset size: 4000 samples
+2025-12-06 14:22:10,378 - Validation dataset size: 200 samples
+2025-12-06 14:22:11,896 - DataLoader batches per epoch: 2000
+2025-12-06 14:22:11,898 - UNet parameters: 859,520,964 trainable
+2025-12-06 14:22:11,898 - UNet input channels: 4
+2025-12-06 14:22:11,898 - VAE scaling factor: 0.18215
+2025-12-06 14:22:11,900 - 
+Starting training for 10 epochs...
+2025-12-06 14:22:11,900 - Batch size: 2, Gradient accumulation: 4
+2025-12-06 14:22:11,900 - Total steps: 5000
+2025-12-06 14:22:11,900 - Learning rate: 1e-05
+2025-12-06 14:22:11,901 - Image size: 256
+2025-12-06 14:22:11,901 - Pre-computing text embeddings...
+2025-12-06 14:39:42,604 - Saved checkpoint at step 500
+2025-12-06 14:55:42,918 - Saved checkpoint at step 1000
+2025-12-06 15:11:41,954 - Saved checkpoint at step 1500
+2025-12-06 15:27:58,637 - Saved checkpoint at step 2000
+2025-12-06 15:27:58,638 - Epoch 1/10 completed. Average loss: 0.4086, Processed 2000 batches
+2025-12-06 15:28:06,330 - Validation (epoch 1): PSNR=9.83 dB, SSIM=0.0811, LPIPS=0.9012
+  Y-channel: PSNR=10.31 dB, SSIM=0.0699
+2025-12-06 15:28:21,574 - New best model (PSNR=9.83 dB) saved to: outputs/models/super_resolution/best
+2025-12-06 15:31:27,071 - Saved checkpoint at step 2500
+2025-12-06 15:34:29,695 - Saved checkpoint at step 3000
+2025-12-06 15:37:33,903 - Saved checkpoint at step 3500
+2025-12-06 15:40:36,473 - Saved checkpoint at step 4000
+2025-12-06 15:40:36,474 - Epoch 2/10 completed. Average loss: 0.3973, Processed 2000 batches
+2025-12-06 15:40:39,624 - Validation (epoch 2): PSNR=9.06 dB, SSIM=0.0792, LPIPS=0.8775
+  Y-channel: PSNR=9.83 dB, SSIM=0.0726
+2025-12-06 15:43:41,073 - Saved checkpoint at step 4500
+2025-12-06 15:46:47,624 - Saved checkpoint at step 5000
+2025-12-06 15:49:51,331 - Saved checkpoint at step 5500
+2025-12-06 15:53:43,049 - Saved checkpoint at step 6000
+2025-12-06 15:53:43,050 - Epoch 3/10 completed. Average loss: 0.3829, Processed 2000 batches
+2025-12-06 15:53:46,407 - Validation (epoch 3): PSNR=9.50 dB, SSIM=0.0969, LPIPS=0.8862
+  Y-channel: PSNR=10.14 dB, SSIM=0.0925
+2025-12-06 15:57:11,161 - Saved checkpoint at step 6500
+2025-12-06 16:00:46,998 - Saved checkpoint at step 7000
+2025-12-06 16:04:40,635 - Saved checkpoint at step 7500
+2025-12-06 16:09:27,735 - Saved checkpoint at step 8000
+2025-12-06 16:09:27,736 - Epoch 4/10 completed. Average loss: 0.3893, Processed 2000 batches
+2025-12-06 16:09:30,892 - Validation (epoch 4): PSNR=9.73 dB, SSIM=0.0927, LPIPS=0.8956
+  Y-channel: PSNR=10.38 dB, SSIM=0.0861
+2025-12-06 16:12:45,289 - Saved checkpoint at step 8500
+2025-12-06 16:16:36,757 - Saved checkpoint at step 9000
+2025-12-06 16:20:28,602 - Saved checkpoint at step 9500
+2025-12-06 16:25:43,861 - Saved checkpoint at step 10000
+2025-12-06 16:25:43,862 - Epoch 5/10 completed. Average loss: 0.3787, Processed 2000 batches
+2025-12-06 16:25:47,014 - Validation (epoch 5): PSNR=9.12 dB, SSIM=0.0966, LPIPS=0.8632
+  Y-channel: PSNR=10.11 dB, SSIM=0.0886
+2025-12-06 16:28:52,568 - Saved checkpoint at step 10500
+2025-12-06 16:32:05,487 - Saved checkpoint at step 11000
+2025-12-06 16:36:18,028 - Saved checkpoint at step 11500
+2025-12-06 16:41:25,201 - Saved checkpoint at step 12000
+2025-12-06 16:41:25,202 - Epoch 6/10 completed. Average loss: 0.3828, Processed 2000 batches
+2025-12-06 16:41:29,033 - Validation (epoch 6): PSNR=9.14 dB, SSIM=0.0825, LPIPS=0.8973
+  Y-channel: PSNR=9.94 dB, SSIM=0.0751
+2025-12-06 16:44:41,113 - Saved checkpoint at step 12500
+2025-12-06 16:47:49,877 - Saved checkpoint at step 13000
+2025-12-06 16:51:03,030 - Saved checkpoint at step 13500
+2025-12-06 16:55:14,253 - Saved checkpoint at step 14000
+2025-12-06 16:55:14,253 - Epoch 7/10 completed. Average loss: 0.3781, Processed 2000 batches
+2025-12-06 16:55:19,554 - Validation (epoch 7): PSNR=8.82 dB, SSIM=0.1122, LPIPS=0.8870
+  Y-channel: PSNR=10.17 dB, SSIM=0.0987
+2025-12-06 16:59:12,040 - Saved checkpoint at step 14500
+2025-12-06 17:03:07,838 - Saved checkpoint at step 15000
+2025-12-06 17:07:14,385 - Saved checkpoint at step 15500
+2025-12-06 17:14:31,198 - Saved checkpoint at step 16000
+2025-12-06 17:14:31,199 - Epoch 8/10 completed. Average loss: 0.3781, Processed 2000 batches
+2025-12-06 17:14:35,842 - Validation (epoch 8): PSNR=9.10 dB, SSIM=0.0740, LPIPS=0.8939
+  Y-channel: PSNR=10.31 dB, SSIM=0.0734
+2025-12-06 17:17:54,198 - Saved checkpoint at step 16500
+2025-12-06 17:21:26,386 - Saved checkpoint at step 17000
+2025-12-06 17:25:52,042 - Saved checkpoint at step 17500
+2025-12-06 17:30:06,772 - Saved checkpoint at step 18000
+2025-12-06 17:30:06,773 - Epoch 9/10 completed. Average loss: 0.3749, Processed 2000 batches
+2025-12-06 17:30:10,323 - Validation (epoch 9): PSNR=9.16 dB, SSIM=0.0916, LPIPS=0.8933
+  Y-channel: PSNR=10.20 dB, SSIM=0.0847
+2025-12-06 17:33:16,621 - Saved checkpoint at step 18500
+2025-12-06 17:37:10,998 - Saved checkpoint at step 19000
+2025-12-06 17:41:11,620 - Saved checkpoint at step 19500
+2025-12-06 17:45:28,230 - Saved checkpoint at step 20000
+2025-12-06 17:45:28,231 - Epoch 10/10 completed. Average loss: 0.3802, Processed 2000 batches
+2025-12-06 17:45:31,545 - Validation (epoch 10): PSNR=9.73 dB, SSIM=0.0955, LPIPS=0.8808
+  Y-channel: PSNR=10.45 dB, SSIM=0.0884
+2025-12-06 17:45:31,558 - Saving final model...
+2025-12-06 17:45:45,652 - UNet config saved to outputs/models/super_resolution/final/unet
+2025-12-06 17:46:03,097 - UNet weights saved: outputs/models/super_resolution/final/unet/diffusion_pytorch_model.safetensors (3278.89 MB)
+2025-12-06 17:46:20,516 - Training complete! Model saved to: outputs/models/super_resolution/final
+2025-12-06 17:46:20,516 - Final model contains: UNet, VAE, text_encoder, tokenizer, scheduler
+2025-12-06 17:46:20,516 - Training completed at: 2025-12-06 17:46:20
+2025-12-06 17:46:20,516 - Total training duration: 3:25:01.622830
+2025-12-06 17:46:20,516 - Average time per epoch: 0:20:30.162283

@@ -1,0 +1,120 @@
+2025-12-06 05:20:00,318 - ============================================================
+2025-12-06 05:20:00,319 - Fine-tuning Stable Diffusion for Inpainting
+2025-12-06 05:20:00,319 - ============================================================
+2025-12-06 05:20:00,319 - Training started at: 2025-12-06 05:20:00
+2025-12-06 05:20:00,320 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/inpainting/training.log
+2025-12-06 05:20:00,320 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/inpainting
+2025-12-06 05:20:00,320 - Base model: runwayml/stable-diffusion-inpainting
+2025-12-06 05:20:00,320 - Image size: 256
+2025-12-06 05:20:00,320 - Max train samples: all
+2025-12-06 05:20:00,320 - Max val samples: all
+2025-12-06 05:20:00,320 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 05:20:00,320 - GPU Memory: 39.56 GB
+2025-12-06 05:20:00,345 - Hugging Face token detected
+2025-12-06 05:20:19,844 - Training dataset size: 4000 samples
+2025-12-06 05:20:19,844 - Validation dataset size: 200 samples
+2025-12-06 05:20:21,362 - DataLoader batches per epoch: 4000
+2025-12-06 05:20:21,364 - UNet parameters: 859,535,364 trainable
+2025-12-06 05:20:21,364 - UNet input channels: 9
+2025-12-06 05:20:21,364 - VAE scaling factor: 0.18215
+2025-12-06 05:20:21,366 - 
+Starting training for 3 epochs...
+2025-12-06 05:20:21,366 - Batch size: 1, Gradient accumulation: 4
+2025-12-06 05:20:21,366 - Total steps: 3000
+2025-12-06 05:20:21,366 - Learning rate: 1e-05
+2025-12-06 05:20:21,367 - Image size: 256
+2025-12-06 21:38:24,326 - ============================================================
+2025-12-06 21:38:25,313 - Fine-tuning Stable Diffusion for Inpainting
+2025-12-06 21:38:25,314 - ============================================================
+2025-12-06 21:38:25,315 - Training started at: 2025-12-06 21:38:24
+2025-12-06 21:38:25,315 - Log file: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/inpainting/training.log
+2025-12-06 21:38:25,315 - Output directory: /content/drive/MyDrive/Image_Restoration_and_Enhancement/outputs/models/inpainting
+2025-12-06 21:38:25,315 - Base model: runwayml/stable-diffusion-inpainting
+2025-12-06 21:38:25,315 - Image size: 256
+2025-12-06 21:38:25,315 - Max train samples: all
+2025-12-06 21:38:25,315 - Max val samples: all
+2025-12-06 21:38:25,316 - GPU Available: NVIDIA A100-SXM4-40GB
+2025-12-06 21:38:25,316 - GPU Memory: 39.56 GB
+2025-12-06 21:38:25,342 - Hugging Face token detected
+2025-12-06 21:39:03,667 - Training dataset size: 4000 samples
+2025-12-06 21:39:03,667 - Validation dataset size: 200 samples
+2025-12-06 21:39:05,261 - DataLoader batches per epoch: 2000
+2025-12-06 21:39:05,263 - UNet parameters: 859,535,364 trainable
+2025-12-06 21:39:05,263 - UNet input channels: 9
+2025-12-06 21:39:05,263 - VAE scaling factor: 0.18215
+2025-12-06 21:39:05,265 - 
+Starting training for 10 epochs...
+2025-12-06 21:39:05,265 - Batch size: 2, Gradient accumulation: 4
+2025-12-06 21:39:05,265 - Total steps: 5000
+2025-12-06 21:39:05,265 - Learning rate: 1e-05
+2025-12-06 21:39:05,266 - Image size: 256
+2025-12-06 21:39:05,266 - Pre-computing text embeddings...
+2025-12-06 22:08:51,272 - Saved checkpoint at step 500
+2025-12-06 22:36:28,915 - Saved checkpoint at step 1000
+2025-12-06 23:04:10,882 - Saved checkpoint at step 1500
+2025-12-06 23:31:52,873 - Saved checkpoint at step 2000
+2025-12-06 23:31:52,874 - Epoch 1/10 completed. Average loss: 0.4170, Processed 2000 batches
+2025-12-06 23:32:00,922 - Validation (epoch 1): PSNR=11.48 dB, SSIM=0.1479, LPIPS=0.6428
+2025-12-06 23:32:18,091 - New best model (PSNR=11.48 dB) saved to: outputs/models/inpainting/best
+2025-12-06 23:35:34,241 - Saved checkpoint at step 2500
+2025-12-06 23:38:50,529 - Saved checkpoint at step 3000
+2025-12-06 23:42:06,542 - Saved checkpoint at step 3500
+2025-12-06 23:45:25,270 - Saved checkpoint at step 4000
+2025-12-06 23:45:25,271 - Epoch 2/10 completed. Average loss: 0.3632, Processed 2000 batches
+2025-12-06 23:45:30,691 - Validation (epoch 2): PSNR=10.39 dB, SSIM=0.1001, LPIPS=0.7326
+2025-12-06 23:48:44,498 - Saved checkpoint at step 4500
+2025-12-06 23:52:10,452 - Saved checkpoint at step 5000
+2025-12-06 23:55:57,398 - Saved checkpoint at step 5500
+2025-12-07 00:01:46,461 - Saved checkpoint at step 6000
+2025-12-07 00:01:46,462 - Epoch 3/10 completed. Average loss: 0.3576, Processed 2000 batches
+2025-12-07 00:01:49,688 - Validation (epoch 3): PSNR=10.48 dB, SSIM=0.1005, LPIPS=0.7729
+2025-12-07 00:05:10,887 - Saved checkpoint at step 6500
+2025-12-07 00:08:44,416 - Saved checkpoint at step 7000
+2025-12-07 00:12:34,183 - Saved checkpoint at step 7500
+2025-12-07 00:16:49,877 - Saved checkpoint at step 8000
+2025-12-07 00:16:49,878 - Epoch 4/10 completed. Average loss: 0.3542, Processed 2000 batches
+2025-12-07 00:16:53,354 - Validation (epoch 4): PSNR=10.13 dB, SSIM=0.0844, LPIPS=0.7740
+2025-12-07 00:20:16,059 - Saved checkpoint at step 8500
+2025-12-07 00:23:52,993 - Saved checkpoint at step 9000
+2025-12-07 00:27:54,285 - Saved checkpoint at step 9500
+2025-12-07 00:34:27,688 - Saved checkpoint at step 10000
+2025-12-07 00:34:27,689 - Epoch 5/10 completed. Average loss: 0.3588, Processed 2000 batches
+2025-12-07 00:34:33,271 - Validation (epoch 5): PSNR=10.04 dB, SSIM=0.0866, LPIPS=0.7948
+2025-12-07 00:39:06,766 - Saved checkpoint at step 10500
+2025-12-07 00:44:48,108 - Saved checkpoint at step 11000
+2025-12-07 00:50:34,044 - Saved checkpoint at step 11500
+2025-12-07 00:56:10,798 - Saved checkpoint at step 12000
+2025-12-07 00:56:10,799 - Epoch 6/10 completed. Average loss: 0.3452, Processed 2000 batches
+2025-12-07 00:56:14,469 - Validation (epoch 6): PSNR=10.13 dB, SSIM=0.0853, LPIPS=0.7804
+2025-12-07 00:59:48,283 - Saved checkpoint at step 12500
+2025-12-07 01:03:34,987 - Saved checkpoint at step 13000
+2025-12-07 01:08:41,081 - Saved checkpoint at step 13500
+2025-12-07 01:15:51,231 - Saved checkpoint at step 14000
+2025-12-07 01:15:51,232 - Epoch 7/10 completed. Average loss: 0.3445, Processed 2000 batches
+2025-12-07 01:15:56,214 - Validation (epoch 7): PSNR=10.14 dB, SSIM=0.0900, LPIPS=0.7833
+2025-12-07 01:19:36,324 - Saved checkpoint at step 14500
+2025-12-07 01:23:28,342 - Saved checkpoint at step 15000
+2025-12-07 01:27:35,850 - Saved checkpoint at step 15500
+2025-12-07 01:36:06,212 - Saved checkpoint at step 16000
+2025-12-07 01:36:06,213 - Epoch 8/10 completed. Average loss: 0.3477, Processed 2000 batches
+2025-12-07 01:36:14,142 - Validation (epoch 8): PSNR=10.10 dB, SSIM=0.0892, LPIPS=0.7818
+2025-12-07 01:40:43,158 - Saved checkpoint at step 16500
+2025-12-07 01:45:31,414 - Saved checkpoint at step 17000
+2025-12-07 01:52:12,637 - Saved checkpoint at step 17500
+2025-12-07 02:00:01,382 - Saved checkpoint at step 18000
+2025-12-07 02:00:01,383 - Epoch 9/10 completed. Average loss: 0.3446, Processed 2000 batches
+2025-12-07 02:00:04,262 - Validation (epoch 9): PSNR=9.92 dB, SSIM=0.0826, LPIPS=0.7992
+2025-12-07 02:03:25,193 - Saved checkpoint at step 18500
+2025-12-07 02:07:16,117 - Saved checkpoint at step 19000
+2025-12-07 02:11:30,146 - Saved checkpoint at step 19500
+2025-12-07 02:17:38,003 - Saved checkpoint at step 20000
+2025-12-07 02:17:38,004 - Epoch 10/10 completed. Average loss: 0.3434, Processed 2000 batches
+2025-12-07 02:17:41,024 - Validation (epoch 10): PSNR=9.75 dB, SSIM=0.0802, LPIPS=0.7987
+2025-12-07 02:17:41,028 - Saving final model...
+2025-12-07 02:17:54,512 - UNet config saved to outputs/models/inpainting/final/unet
+2025-12-07 02:18:07,024 - UNet weights saved: outputs/models/inpainting/final/unet/diffusion_pytorch_model.safetensors (3278.95 MB)
+2025-12-07 02:18:25,406 - Training complete! Model saved to: outputs/models/inpainting/final
+2025-12-07 02:18:25,406 - Final model contains: UNet, VAE, text_encoder, tokenizer, scheduler
+2025-12-07 02:18:25,406 - Training completed at: 2025-12-07 02:18:25
+2025-12-07 02:18:25,406 - Total training duration: 4:40:01.079681
+2025-12-07 02:18:25,407 - Average time per epoch: 0:28:00.107968
