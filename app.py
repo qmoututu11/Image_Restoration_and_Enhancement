@@ -10,7 +10,7 @@ import numpy as np
 from pathlib import Path
 import sys
 import logging
-import traceback
+from typing import Optional
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -21,22 +21,44 @@ from src.inference import RestorationPipeline
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize pipeline
-try:
-    pipeline = RestorationPipeline()
-    logger.info("Pipeline initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize pipeline: {e}", exc_info=True)
-    pipeline = None
+# Global pipeline - will be reinitialized when model type changes
+pipeline = None
+
+def initialize_pipeline(model_type="fine_tuned"):
+    """Initialize pipeline with specified model type."""
+    global pipeline
+    try:
+        if model_type == "fine_tuned":
+            # Use fine-tuned models (default)
+            pipeline = RestorationPipeline()
+            logger.info("Pipeline initialized with fine-tuned models")
+        else:  # pretrained
+            # Use pretrained models only
+            config = {
+                "denoise": {"fine_tuned_dir": "nonexistent", "pretrained_id": "sd-legacy/stable-diffusion-v1-5"},
+                "sr": {"fine_tuned_dir": "nonexistent", "pretrained_id": "sd-legacy/stable-diffusion-v1-5"},
+                "colorize": {"fine_tuned_dir": "nonexistent", "pretrained_id": "sd-legacy/stable-diffusion-v1-5"},
+                "inpaint": {"fine_tuned_dir": "nonexistent", "pretrained_id": "runwayml/stable-diffusion-inpainting"},
+            }
+            pipeline = RestorationPipeline(config=config)
+            logger.info("Pipeline initialized with pretrained models")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize pipeline: {e}", exc_info=True)
+        pipeline = None
+        return False
+
+# Initialize with fine-tuned models by default
+initialize_pipeline(model_type="fine_tuned")
 
 
 def process_image(
-    input_image: Image.Image,
+    input_image: Optional[Image.Image],
     tasks: list,
     denoise_strength: float = 0.5,
     sr_scale: int = 4,
     inpaint_prompt: str = "high quality detailed photo, realistic",
-    mask_image: Image.Image = None
+    mask_image: Optional[Image.Image] = None
 ) -> tuple:
     """
     Process uploaded image through selected restoration tasks.
@@ -52,18 +74,22 @@ def process_image(
     Returns:
         Tuple of (final_image, gallery_list)
     """
-    if pipeline is None:
-        return None, [("Error: Pipeline not initialized", "Error")]
+    global pipeline
     
+    # Check input image first
     if input_image is None:
         return None, []
+    
+    # Check pipeline initialization
+    if pipeline is None:
+        return None, [("Error: Pipeline not initialized", "Error")]
     
     try:
         # Convert to RGB if needed
         if input_image.mode != "RGB":
             input_image = input_image.convert("RGB")
         
-        # Process image
+        # Use local pipeline
         kwargs = {
             "denoise_strength": denoise_strength,
             "sr_scale": sr_scale,
@@ -146,6 +172,14 @@ def create_interface():
                     visible=False
                 )
                 
+                gr.Markdown("### Model Selection")
+                model_type = gr.Radio(
+                    choices=["Fine-tuned (Local)", "Pretrained (Hugging Face)"],
+                    value="Fine-tuned (Local)",
+                    label="Model Type",
+                    info="Fine-tuned: Your trained models (recommended). Pretrained: Base Stable Diffusion models."
+                )
+                
                 gr.Markdown("### Task Selection")
                 denoise_check = gr.Checkbox(label="Denoising", value=False)
                 sr_check = gr.Checkbox(label="Super-Resolution", value=False)
@@ -188,13 +222,46 @@ def create_interface():
             outputs=[mask_image]
         )
         
+        model_status = gr.Textbox(
+            label="Model Status",
+            value="✓ Fine-tuned models loaded",
+            interactive=False,
+            visible=True
+        )
+        
+        # Handle model type change
+        def on_model_type_change(model_type_choice):
+            if "Fine-tuned" in model_type_choice:
+                model_type_str = "fine_tuned"
+            else:  # Pretrained
+                model_type_str = "pretrained"
+            
+            success = initialize_pipeline(model_type=model_type_str)
+            if success:
+                return gr.update(value=f"✓ Model switched to: {model_type_choice}")
+            else:
+                return gr.update(value=f"✗ Error switching model. Check logs.")
+        
+        model_type.change(
+            fn=on_model_type_change,
+            inputs=[model_type],
+            outputs=[model_status]
+        )
+        
         # Wrapper function for processing (using default settings)
-        def process_wrapper(img, denoise, sr, colorize, inpaint, mask):
+        def process_wrapper(img, denoise, sr, colorize, inpaint, mask, model_choice):
+            if pipeline is None:
+                error_img = Image.new("RGB", (400, 300), color="red")
+                return [(error_img, "Error: Pipeline not initialized. Please check model selection.")]
+            
+            # Check if image is provided
+            if img is None:
+                return []
+            
             tasks = get_selected_tasks(denoise, sr, colorize, inpaint)
             if not tasks:
-                if img is not None:
-                    return [(img, "No tasks selected - please select at least one task")]
-                return []
+                return [(img, "No tasks selected - please select at least one task")]
+            
             try:
                 # Use default settings: strength=0.5, sr_scale=4, default prompt
                 _, gallery_list = process_image(
@@ -220,89 +287,63 @@ def create_interface():
                 sr_check,
                 colorize_check,
                 inpaint_check,
-                mask_image
+                mask_image,
+                model_type
             ],
             outputs=[gallery]
         )
         
-        # Example images - randomly pick 2 from each task
-        import random
-        example_paths = []
+        # Example images from demo directory - organized by task
+        demo_images_dir = Path("data/demo/images")
         
-        # Denoising: 2 random images
-        denoise_dir = Path("data/pairs/denoise/test/input")
-        if denoise_dir.exists():
-            denoise_files = [f for f in denoise_dir.glob("*.jpg") if f.exists()]
-            if denoise_files:
-                selected = random.sample(denoise_files, min(2, len(denoise_files)))
-                for f in selected:
-                    example_paths.append([str(f)])
-        
-        # Super-resolution: 2 random images
-        sr_dir = Path("data/pairs/sr_x4/test/input")
-        if sr_dir.exists():
-            sr_files = [f for f in sr_dir.glob("*.jpg") if f.exists()]
-            if sr_files:
-                selected = random.sample(sr_files, min(2, len(sr_files)))
-                for f in selected:
-                    example_paths.append([str(f)])
-        
-        # Colorization: 2 random images
-        colorize_dir = Path("data/pairs/colorize/test/input")
-        if colorize_dir.exists():
-            colorize_files = [f for f in colorize_dir.glob("*.png") if f.exists()]
-            if colorize_files:
-                selected = random.sample(colorize_files, min(2, len(colorize_files)))
-                for f in selected:
-                    example_paths.append([str(f)])
-        
-        # Inpainting: 2 random images
-        inpaint_dir = Path("data/pairs/inpaint/test/input")
-        if inpaint_dir.exists():
-            inpaint_files = [f for f in inpaint_dir.glob("*.jpg") if f.exists()]
-            if inpaint_files:
-                selected = random.sample(inpaint_files, min(2, len(inpaint_files)))
-                for f in selected:
-                    example_paths.append([str(f)])
-        
-        # Create example descriptions
-        example_descriptions = []
-        for i, example_path in enumerate(example_paths):
-            path_str = example_path[0]
-            if "denoise" in path_str:
-                desc = "Noisy image - try Denoising"
-            elif "sr_x4" in path_str or "sr" in path_str:
-                desc = "Low-resolution image - try Super-Resolution"
-            elif "colorize" in path_str:
-                desc = "Grayscale image - try Colorization"
-            elif "inpaint" in path_str:
-                desc = "Damaged image - try Inpainting (upload mask if available)"
-            else:
-                desc = "Test image - try any task"
-            example_descriptions.append(desc)
-        
-        if example_paths:
-            gr.Markdown("### 📸 Example Images")
+        if demo_images_dir.exists():
+            gr.Markdown("### 📸 Example Images by Task")
             gr.Markdown("""
-            **Try these examples:**
-            - **Noisy images**: Select "Denoising" to remove noise
-            - **Low-resolution images**: Select "Super-Resolution" to upscale
-            - **Grayscale images**: Select "Colorization" to add color
-            - **Damaged images**: Select "Inpainting" to fill missing parts
-            
-            You can also combine multiple tasks (e.g., Denoising + Colorization for old photos)
+            Click any example image below to load it, then select the corresponding task and click 'Restore Image'.
+            You can also combine multiple tasks (e.g., Denoising + Colorization for old photos).
             """)
             
-            # Create examples with descriptions
-            examples_with_info = []
-            for path, desc in zip(example_paths, example_descriptions):
-                examples_with_info.append([path[0], desc])
+            # Organize examples by task
+            task_examples = {
+                "Denoising": {
+                    "files": sorted([f for f in demo_images_dir.glob("denoise*.jpg") if f.exists()]),
+                    "description": "Noisy images - Select 'Denoising' task to remove noise",
+                    "icon": "🔇"
+                },
+                "Super-Resolution": {
+                    "files": sorted([f for f in demo_images_dir.glob("super-resolution*.jpg") if f.exists()]),
+                    "description": "Low-resolution images - Select 'Super-Resolution' task to upscale",
+                    "icon": "🔍"
+                },
+                "Colorization": {
+                    "files": sorted([f for f in demo_images_dir.glob("colorize*.png") if f.exists()]),
+                    "description": "Grayscale images - Select 'Colorization' task to add color",
+                    "icon": "🎨"
+                },
+                "Inpainting": {
+                    "files": sorted([f for f in demo_images_dir.glob("inpaint*.jpg") if f.exists()]),
+                    "description": "Damaged images - Select 'Inpainting' task to fill missing parts",
+                    "icon": "🔧"
+                }
+            }
             
-            gr.Examples(
-                examples=example_paths,
-                inputs=[input_image],
-                label="Click any example to load it, then select tasks and click 'Restore Image'"
-            )
+            # Create example sections for each task
+            all_example_paths = []
+            for task_name, task_data in task_examples.items():
+                if task_data["files"]:
+                    with gr.Group():
+                        gr.Markdown(f"#### {task_data['icon']} **{task_name}**")
+                        gr.Markdown(f"*{task_data['description']}*")
+                        
+                        # Create examples for this task
+                        task_example_paths = [[str(f)] for f in task_data["files"]]
+                        all_example_paths.extend(task_example_paths)
+                        
+                        gr.Examples(
+                            examples=task_example_paths,
+                            inputs=[input_image],
+                            label=f"{task_name} Examples - Click to load"
+                        )
     
     return app
 
