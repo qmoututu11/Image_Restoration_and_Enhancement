@@ -48,16 +48,6 @@ The app will open in your browser, allowing you to:
 - Adjust task-specific parameters (strength, scale, prompts)
 - Upload masks for inpainting
 
-### 4. Quick Test (Command Line)
-
-Test inpainting on a single sample:
-
-```
-python3 scripts/test_inference_sd_inpaint.py \
-  --pairs_root data/pairs/inpaint \
-  --output outputs/sd_inpaint_test.png
-```
-
 ## Project Structure
 
 ```
